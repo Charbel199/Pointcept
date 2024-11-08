@@ -21,3 +21,4 @@ from .shapenet_part import ShapeNetPartDataset
 
 # dataloader
 from .dataloader import MultiDatasetDataloader
+from .dataset_with_hierarchical_regions import HierarchicalRegionsDataset
