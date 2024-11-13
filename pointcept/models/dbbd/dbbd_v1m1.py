@@ -46,7 +46,8 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                          propagation_method, 
                          transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
                          parent_feature: List[torch.Tensor] = None, # (levelB, ) if there's a parent feature list, 
-                         level: int = 0,) -> List[Dict[str, Any]]:
+                         level: int = 0,
+                         output_dim=128) -> List[Dict[str, Any]]:
     
     
     # Iterate through regions and get corresponding indices then points from transformed points -> List of points vectors (levelB, levelN, D)
@@ -71,8 +72,8 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
 
     # Encode
     if batched_tensor.shape[2] == 3:
-        padding_size = (0, 128)  # pad the last dimension (0 elems in front, 128 after)
-    elif batched_tensor.shape[2] ==128:
+        padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+    elif batched_tensor.shape[2] ==output_dim:
         padding_size = (0, 3)
     else:
         print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
@@ -108,7 +109,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                          aggregator,
                          transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
                          level: int = 0,
-                         max_levels: int = 1) -> Dict[str, Any]:
+                         max_levels: int = 1,
+                         output_dim=128) -> Dict[str, Any]:
     
     if level!=max_levels:
         previous_level_sub_regions = [] # (levlB, ...)
@@ -132,8 +134,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
         # Encode
         if batched_tensor.shape[2] == 3:
-            padding_size = (0, 128)  # pad the last dimension (0 elems in front, 128 after)
-        elif batched_tensor.shape[2] ==128:
+            padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+        elif batched_tensor.shape[2] ==output_dim:
             padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
@@ -165,8 +167,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
         # Encode
         if batched_tensor.shape[2] == 3:
-            padding_size = (0, 128)  # pad the last dimension (0 elems in front, 128 after)
-        elif batched_tensor.shape[2] ==128:
+            padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+        elif batched_tensor.shape[2] ==output_dim:
             padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
@@ -265,10 +267,10 @@ class DBBD(nn.Module):
         num_samples_per_level,
         max_levels,
         output_dim,
+        device
 
     ):
         super().__init__()
-        device = "cuda:0"
         self.point_encoder = build_model(backbone)
         self.aggregator = MaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
@@ -300,8 +302,8 @@ class DBBD(nn.Module):
         batch_hierarchical_regions = data_dict['regions']
 
         # Encode and process with shared encoder using the same regions
-        encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict)
-        encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels)
+        encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
+        encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels,output_dim=self.output_dim)
 
         # Initialize dictionaries for accumulating features across batches
         all_features_dict_branch1 = {}

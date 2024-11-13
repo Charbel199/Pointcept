@@ -51,6 +51,7 @@ model = dict(
         dict(type="TODO", loss_weight=1.0),
     ],
     output_dim=128,
+    device = "cuda:0"
 )
 
 
