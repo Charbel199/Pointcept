@@ -71,10 +71,12 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
     # Encode
-    if batched_tensor.shape[2] == 3:
+    if batched_tensor.shape[2] == 6:
+    # if batched_tensor.shape[2] == 3:
         padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
     elif batched_tensor.shape[2] ==output_dim:
-        padding_size = (0, 3)
+        padding_size = (0, 6)
+        # padding_size = (0, 3)
     else:
         print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     batched_point_features = inference(encoder, batched_tensor, padding_size)
@@ -133,10 +135,12 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
         # Encode
-        if batched_tensor.shape[2] == 3:
+        # if batched_tensor.shape[2] == 3:
+        if batched_tensor.shape[2] == 6:
             padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
         elif batched_tensor.shape[2] ==output_dim:
-            padding_size = (0, 3)
+            padding_size = (0, 6)
+            # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
         batched_point_features = inference(encoder, batched_tensor, padding_size)
@@ -166,10 +170,12 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
 
         # Encode
-        if batched_tensor.shape[2] == 3:
+        if batched_tensor.shape[2] == 6:
+        # if batched_tensor.shape[2] == 3:
             padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
         elif batched_tensor.shape[2] ==output_dim:
-            padding_size = (0, 3)
+            padding_size = (0, 6)
+            # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
         batched_point_features = inference(encoder, batched_tensor, padding_size)
@@ -274,7 +280,7 @@ class DBBD(nn.Module):
         self.point_encoder = build_model(backbone)
         self.aggregator = MaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
-        self.propagation_method.update_feature_dim(input_dim=131, feature_dim=128)
+        self.propagation_method.update_feature_dim(input_dim=backbone["in_channels"], feature_dim=128)
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
@@ -285,9 +291,14 @@ class DBBD(nn.Module):
         offsets = data_dict["offset"]
 
         view1_coord = data_dict["view1_coord"]
+        view1_color = data_dict["view1_color"]
         view1_offset = data_dict["view1_offset"].int()
         view2_coord = data_dict["view2_coord"]
+        view2_color = data_dict["view2_color"]
         view2_offset = data_dict["view2_offset"].int()
+        
+        xyzrgb1 = torch.cat((view1_coord, view1_color), dim=1)
+        xyzrgb2 = torch.cat((view2_coord, view2_color), dim=1)
 
         # union origin coord
         view1_batch = offset2batch(view1_offset)
@@ -295,10 +306,14 @@ class DBBD(nn.Module):
 
         view1_batch_count = view1_batch.bincount()
         view2_batch_count = view2_batch.bincount()
-        view1_coord_split = view1_coord.split(list(view1_batch_count))
-        view2_coord_split = view2_coord.split(list(view2_batch_count))
-        transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_coord_split)}
-        transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_coord_split)}
+        # view1_coord_split = view1_coord.split(list(view1_batch_count))
+        # view2_coord_split = view2_coord.split(list(view2_batch_count))
+        view1_xyzrgb_split = xyzrgb1.split(list(view1_batch_count))
+        view2_xyzrgb_split = xyzrgb2.split(list(view2_batch_count))
+        transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_xyzrgb_split)}
+        transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_xyzrgb_split)}
+        # transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_coord_split)}
+        # transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_coord_split)}
         batch_hierarchical_regions = data_dict['regions']
 
         # Encode and process with shared encoder using the same regions

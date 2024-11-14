@@ -16,7 +16,7 @@ model = dict(
     max_levels=2,
     backbone=dict(
         type="PT-v3m1",
-        in_channels=128+3,
+        in_channels=128+6,
         order=("z", "z-trans"),
         stride=(2, 2, 2, 2),
         enc_depths=(2, 2, 2, 6, 2),
@@ -51,7 +51,7 @@ model = dict(
         dict(type="TODO", loss_weight=1.0),
     ],
     output_dim=128,
-    device = "cuda:0"
+    device = "cuda"
 )
 
 

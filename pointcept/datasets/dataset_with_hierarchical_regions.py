@@ -68,7 +68,7 @@ class HierarchicalRegionsDataset(DefaultDataset):
             with open(regions_path, 'rb') as f:
                 data_dict["regions"] = pickle.load(f)
         else:
-            regions = hierarchical_region_proposal(data_dict["coord"], num_samples_per_level=num_samples_per_level, max_levels=max_levels, batch_idx=0)
+            regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=num_samples_per_level, max_levels=max_levels, batch_idx=0)
             data_dict["regions"] = regions
             with open(regions_path, 'wb') as f:
                 pickle.dump(regions, f)
