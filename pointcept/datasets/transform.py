@@ -20,6 +20,7 @@ import copy
 from collections.abc import Sequence, Mapping
 
 from pointcept.utils.registry import Registry
+from .preprocessing.hierarchical_region_proposal import hierarchical_region_proposal
 
 TRANSFORMS = Registry("transforms")
 
@@ -68,6 +69,18 @@ class Copy(object):
                 data_dict[value] = copy.deepcopy(data_dict[key])
         return data_dict
 
+
+@TRANSFORMS.register_module()
+class DBDD(object):
+    def __init__(self,num_samples_per_level,max_levels):
+        self.max_levels = max_levels
+        self.num_samples_per_level = num_samples_per_level
+
+    def __call__(self, data_dict):
+        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0)
+        data_dict["regions"] = regions
+        return data_dict
+    
 
 @TRANSFORMS.register_module()
 class ToTensor(object):

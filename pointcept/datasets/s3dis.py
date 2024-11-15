@@ -11,8 +11,8 @@ from .builder import DATASETS
 
 
 @DATASETS.register_module()
-# class S3DISDataset(DefaultDataset):
-class S3DISDataset(HierarchicalRegionsDataset):
+class S3DISDataset(DefaultDataset):
+# class S3DISDataset(HierarchicalRegionsDataset):
     def get_data_name(self, idx):
         remain, room_name = os.path.split(self.data_list[idx % len(self.data_list)])
         remain, area_name = os.path.split(remain)

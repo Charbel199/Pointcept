@@ -99,6 +99,7 @@ data = dict(
                     dict(type="NormalizeColor"),
                 ],
             ),
+            dict(type="DBDD",num_samples_per_level=16,max_levels=2),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -153,7 +154,7 @@ data = dict(
                     dict(type="NormalizeColor"),
                 ],
             ),
-
+            dict(type="DBDD",num_samples_per_level=16,max_levels=2),
             dict(type="ToTensor"),
             dict(
                 type="Collect",

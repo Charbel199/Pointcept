@@ -67,9 +67,9 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
             return None, []
 
         if level == 0:
-            min_num_points_per_pointcloud = 2000
+            min_num_points_per_pointcloud = 50000
         elif level == 1:
-            min_num_points_per_pointcloud = 50
+            min_num_points_per_pointcloud = 10000
 
         points_pos = points[:, :3]
         sampled_centers = farthest_point_sampling(points_pos, num_samples_per_level)
