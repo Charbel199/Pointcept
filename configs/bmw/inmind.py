@@ -70,16 +70,17 @@ param_dicts = [dict(keyword="block", lr=0.0006)]
 
 # dataset settings
 dataset_type = "S3DISDataset"
-data_root = "data/s3dis"
+data_root = "data/s3dis2"
 data = dict(
     train=dict(
         type=dataset_type,
         split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
         data_root=data_root,
-        num_samples_per_level=16,
+        num_samples_per_level=3,
         max_levels=2,
         transform=[
             dict(type="CenterShift", apply_z=True),
+            dict(type="SphereCrop", point_max=100000),
             dict(type="Copy", keys_dict={"coord": "origin_coord"}),
             dict(
                 type="ContrastiveViewsGenerator",
@@ -99,7 +100,7 @@ data = dict(
                     dict(type="NormalizeColor"),
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=16,max_levels=2),
+            dict(type="DBDD",num_samples_per_level=3,max_levels=2),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -127,11 +128,12 @@ data = dict(
     val=dict(
         type=dataset_type,
         split="Area_5",
-        num_samples_per_level=16,
+        num_samples_per_level=3,
         max_levels=2,
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
+            dict(type="SphereCrop", point_max=100000),
             dict(
                 type="RandomDropout", dropout_ratio=0.2, dropout_application_ratio=0.2
             ),
@@ -154,7 +156,7 @@ data = dict(
                     dict(type="NormalizeColor"),
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=16,max_levels=2),
+            dict(type="DBDD",num_samples_per_level=3,max_levels=2),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -180,10 +182,11 @@ data = dict(
         type=dataset_type,
         split="Area_5",
         data_root=data_root,
-        num_samples_per_level=16,
+        num_samples_per_level=3,
         max_levels=2,
         transform=[
             dict(type="CenterShift", apply_z=True),
+            dict(type="SphereCrop", point_max=100000),
             dict(type="NormalizeColor"),
         ],
         test_mode=True,
