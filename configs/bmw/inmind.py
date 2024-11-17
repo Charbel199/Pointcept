@@ -12,8 +12,8 @@ find_unused_parameters = False
 # model settings
 model = dict(
     type="DBBD-v1m1",
-    num_samples_per_level=16,
-    max_levels=2,
+    num_samples_per_level=2,
+    max_levels=1,
     backbone=dict(
         type="PT-v3m1",
         in_channels=128+6,
@@ -47,9 +47,6 @@ model = dict(
         pdnorm_affine=True,
         pdnorm_conditions=("ScanNet", "S3DIS", "Structured3D"),
     ),
-    criteria=[
-        dict(type="TODO", loss_weight=1.0),
-    ],
     output_dim=128,
     device = "cuda"
 )
@@ -76,11 +73,11 @@ data = dict(
         type=dataset_type,
         split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
         data_root=data_root,
-        num_samples_per_level=3,
-        max_levels=2,
+        num_samples_per_level=2,
+        max_levels=1,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=100000),
+            dict(type="SphereCrop", point_max=80000),
             dict(type="Copy", keys_dict={"coord": "origin_coord"}),
             dict(
                 type="ContrastiveViewsGenerator",
@@ -98,9 +95,17 @@ data = dict(
                     dict(type="Copy", keys_dict={"coord": "grid_coord"}),
                     dict(type="CenterShift", apply_z=False),
                     dict(type="NormalizeColor"),
+                    # dict(
+                    # type="GridSample",
+                    #     grid_size=0.05,
+                    #     hash_type="fnv",
+                    #     mode="train",
+                    #     keys=("coord", "color"),
+                    #     return_grid_coord=True,
+                    # )
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=3,max_levels=2),
+            dict(type="DBDD",num_samples_per_level=2,max_levels=1),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -128,12 +133,12 @@ data = dict(
     val=dict(
         type=dataset_type,
         split="Area_5",
-        num_samples_per_level=3,
-        max_levels=2,
+        num_samples_per_level=2,
+        max_levels=1,
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=100000),
+            dict(type="SphereCrop", point_max=5000),
             dict(
                 type="RandomDropout", dropout_ratio=0.2, dropout_application_ratio=0.2
             ),
@@ -154,9 +159,17 @@ data = dict(
                     dict(type="Copy", keys_dict={"coord": "grid_coord"}),
                     dict(type="CenterShift", apply_z=False),
                     dict(type="NormalizeColor"),
+                    # dict(
+                    # type="GridSample",
+                    #     grid_size=0.05,
+                    #     hash_type="fnv",
+                    #     mode="train",
+                    #     keys=("coord", "color"),
+                    #     return_grid_coord=True,
+                    # )
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=3,max_levels=2),
+            dict(type="DBDD",num_samples_per_level=2,max_levels=1),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -182,11 +195,11 @@ data = dict(
         type=dataset_type,
         split="Area_5",
         data_root=data_root,
-        num_samples_per_level=3,
-        max_levels=2,
+        num_samples_per_level=2,
+        max_levels=1,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=100000),
+            dict(type="SphereCrop", point_max=5000),
             dict(type="NormalizeColor"),
         ],
         test_mode=True,

@@ -27,7 +27,7 @@ def inference(encoder, points_tensor, padding_size):
     offset_arr = torch.tensor(offset_arr,device=device)
 
 
-    points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 1.0,
+    points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 0.05,
                    "offset": offset_arr}
     point_features = encoder(points_dict)["feat"]
     point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
@@ -79,6 +79,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         # padding_size = (0, 3)
     else:
         print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+    print(f"INFERENCE on level {level} with batchwed tensor : {batched_tensor.shape}")
     batched_point_features = inference(encoder, batched_tensor, padding_size)
 
     # Aggregate
@@ -143,6 +144,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+        print(f"INFERENCE on level {level} with batchwed tensor : {batched_tensor.shape}")
         batched_point_features = inference(encoder, batched_tensor, padding_size)
 
         # Aggregate
@@ -178,6 +180,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+        print(f"INFERENCE on level {level} with batchwed tensor : {batched_tensor.shape}")
         batched_point_features = inference(encoder, batched_tensor, padding_size)
         # Aggregate
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
@@ -269,7 +272,6 @@ class DBBD(nn.Module):
     def __init__(
         self,
         backbone,
-        criteria,
         num_samples_per_level,
         max_levels,
         output_dim,
