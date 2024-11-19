@@ -216,9 +216,9 @@ def collect_region_features_per_level(region: Dict[str, Any],
 
 def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[torch.Tensor]],
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
+                                       criterion,
                                        temperature: float = 0.07, device="cuda:0") -> torch.Tensor:
     total_loss = 0.0
-    criterion = nn.CrossEntropyLoss()
 
     for level in features_dict_branch1.keys():
         features_branch1 = features_dict_branch1[level]
@@ -286,6 +286,7 @@ class DBBD(nn.Module):
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, data_dict):
         total_loss = 0.0
@@ -338,7 +339,7 @@ class DBBD(nn.Module):
             combine_features(all_features_dict_branch2, features_dict_branch2)
 
         # Compute loss for this sample
-        loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
+        loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2, self.criterion)
         total_loss += loss
         result_dict = dict(loss=total_loss)
         return result_dict
