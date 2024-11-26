@@ -18,6 +18,41 @@ from .default import HookBase
 from .builder import HOOKS
 
 
+
+@HOOKS.register_module()
+class BasicEvaluator(HookBase):
+    def after_epoch(self):
+        if self.trainer.cfg.evaluate:
+            self.eval()
+
+    def eval(self):
+        self.trainer.logger.info(">>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>")
+        self.trainer.model.eval()
+        for i, input_dict in enumerate(self.trainer.val_loader):
+            for key in input_dict.keys():
+                if isinstance(input_dict[key], torch.Tensor):
+                    input_dict[key] = input_dict[key].cuda(non_blocking=True)
+            with torch.no_grad():
+                output_dict = self.trainer.model(input_dict)
+            # output = output_dict["seg_logits"]
+            loss = output_dict["loss"]
+            # pred = output.max(1)[1]
+            # segment = input_dict["segment"]
+
+            self.trainer.storage.put_scalar("val_loss", loss.item())
+
+        loss_avg = self.trainer.storage.history("val_loss").avg
+
+        current_epoch = self.trainer.epoch + 1
+        if self.trainer.writer is not None:
+            self.trainer.writer.add_scalar("val/loss", loss_avg, current_epoch)
+        self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
+        self.trainer.comm_info["current_metric_value"] = loss_avg  # save for saver
+        self.trainer.comm_info["current_metric_name"] = "loss_avg"  # save for saver
+    def after_train(self):
+        pass
+
+
 @HOOKS.register_module()
 class ClsEvaluator(HookBase):
     def after_epoch(self):
