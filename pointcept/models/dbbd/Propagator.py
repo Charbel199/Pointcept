@@ -34,7 +34,7 @@ class ConcatPropagation(FeaturePropagationBase):
             # Concatenate along the second dimension
             combined_feature = torch.cat((current_feature, repeated_vector), dim=1)  # (levelN, C+D)
 
-            combined_feature = self.linear(combined_feature)  # Shape: [levelN, feature_dim]
+            combined_feature = self.linear_block(combined_feature)  # Shape: [levelN, feature_dim]
             combined_feature = self.activation(combined_feature)
 
 
@@ -50,7 +50,7 @@ class ConcatPropagation(FeaturePropagationBase):
 
     def update_feature_dim(self, input_dim, feature_dim):
         self.feature_dim = feature_dim
-        self.linear = nn.Linear(input_dim, feature_dim)
+        self.linear_block = nn.Linear(input_dim, feature_dim)
         self.activation = nn.ReLU()
 
     @property
