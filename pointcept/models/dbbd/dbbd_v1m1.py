@@ -217,7 +217,7 @@ def collect_region_features_per_level(region: Dict[str, Any],
 def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[torch.Tensor]],
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
                                        criterion,
-                                       temperature: float = 0.07, device="cuda:0") -> torch.Tensor:
+                                       temperature: float = 0.07) -> torch.Tensor:
     total_loss = 0.0
 
     for level in features_dict_branch1.keys():
@@ -233,8 +233,8 @@ def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[tor
             print(f"Mismatch at level {level}: {len(features_branch1)} vs {len(features_branch2)} features")
             continue
 
-        features_branch1_tensor = torch.stack(features_branch1).to(device)
-        features_branch2_tensor = torch.stack(features_branch2).to(device)
+        features_branch1_tensor = torch.stack(features_branch1)
+        features_branch2_tensor = torch.stack(features_branch2)
 
         # Normalize features
         features_branch1_tensor = F.normalize(features_branch1_tensor, dim=1)
@@ -242,7 +242,7 @@ def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[tor
 
         # Compute logits
         logits = torch.mm(features_branch1_tensor, features_branch2_tensor.t()) / temperature
-        labels = torch.arange(logits.size(0)).long().to(device)
+        labels = torch.arange(logits.size(0)).long().to(logits.device)
 
         # Compute loss
         loss = criterion(logits, labels)
