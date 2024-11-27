@@ -3,7 +3,7 @@ Pretraining TODO
 
 Author: Anthony Yaghi, Manuel Philipp Vogel
 """
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
@@ -47,11 +47,13 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                          transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
                          parent_feature: List[torch.Tensor] = None, # (levelB, ) if there's a parent feature list, 
                          level: int = 0,
-                         output_dim=128) -> List[Dict[str, Any]]:
+                         output_dim=128,
+                         data_dict=None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     
     
     # Iterate through regions and get corresponding indices then points from transformed points -> List of points vectors (levelB, levelN, D)
     points_tensor_list = []
+    all_indices = []
     for i, reg in enumerate(region):
         batch_idx = reg['batch_idx']
         corresponding_transformed_points = transformed_points[batch_idx]
@@ -67,6 +69,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                 points_tensor = propagation_method.propagate(parent_feature[i], points_tensor) # (levelN, output_dim)
             
             points_tensor_list.append(points_tensor)
+            all_indices.append(indices)
 
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
@@ -82,6 +85,8 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     print(f"INFERENCE on level {level} with batchwed tensor : {batched_tensor.shape}")
     batched_point_features = inference(encoder, batched_tensor, padding_size)
 
+    if padding_size == (0, 6):   # only encoded points, not higher level features
+        data_dict[f"view1_color_prediction"][np.concatenate(all_indices)] = batched_point_features[:, :, :3].reshape(-1, 3)
     # Aggregate
     batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
@@ -103,9 +108,9 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                 next_level_sub_regions.append(sub_region)
     if len(next_level_sub_regions) > 0 and len(parent_feature_list)>0:
         assert len(next_level_sub_regions) == len(parent_feature_list), "Mismatch between next level subregions and parent features list"
-        encode_and_propagate(next_level_sub_regions, encoder, aggregator, propagation_method, transformed_points, parent_feature=parent_feature_list, level=level+1)
+        _, data_dict = encode_and_propagate(next_level_sub_regions, encoder, aggregator, propagation_method, transformed_points, parent_feature=parent_feature_list, level=level+1, data_dict=data_dict)
     
-    return region
+    return region, data_dict
 
 def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...) 
                          encoder, 
@@ -113,7 +118,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                          transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
                          level: int = 0,
                          max_levels: int = 1,
-                         output_dim=128) -> Dict[str, Any]:
+                         output_dim=128,
+                         data_dict=None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     
     if level!=max_levels:
         previous_level_sub_regions = [] # (levlB, ...)
@@ -123,7 +129,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                     if len(sub_region['points_indices']) > 0:
                         previous_level_sub_regions.append(sub_region)
 
-        encode_and_aggregate(previous_level_sub_regions, encoder, aggregator, transformed_points, level=level+1, max_levels= max_levels)
+        _, data_dict = encode_and_aggregate(previous_level_sub_regions, encoder, aggregator, transformed_points, level=level+1, max_levels=max_levels, data_dict=data_dict)
 
         super_points_from_previous_level = []
         for reg in region:
@@ -157,10 +163,12 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
     else:
         # IF LAST LEVEL
         points_tensor_list = []
+        all_indices = []
         for i, reg in enumerate(region):
             batch_idx = reg['batch_idx']
             corresponding_transformed_points = transformed_points[batch_idx]
             indices = np.array(reg['points_indices'], dtype=int) # (levelN,)
+            all_indices.append(indices)
     
             if len(indices) == 0:
                 raise Exception("Got a region with no indics")
@@ -182,6 +190,9 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
         print(f"INFERENCE on level {level} with batchwed tensor : {batched_tensor.shape}")
         batched_point_features = inference(encoder, batched_tensor, padding_size)
+
+        # Take features from batched_point_features and use them as predicted colors (of the correct points)
+        data_dict[f"view2_color_prediction"][np.concatenate(all_indices)] = batched_point_features[:, :, :3].reshape(-1, 3)
         # Aggregate
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
@@ -190,7 +201,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['level_branch2'] = level 
 
-    return region
+    return region, data_dict
 
 def collect_region_features_per_level(region: Dict[str, Any],
                                       features_dict_branch1: Dict[int, List[torch.Tensor]],
@@ -218,7 +229,7 @@ def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[tor
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
                                        criterion,
                                        temperature: float = 0.07, device="cuda:0") -> torch.Tensor:
-    total_loss = 0.0
+    contrastive_loss = 0.0
 
     for level in features_dict_branch1.keys():
         features_branch1 = features_dict_branch1[level]
@@ -246,9 +257,35 @@ def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[tor
 
         # Compute loss
         loss = criterion(logits, labels)
-        total_loss += loss
+        contrastive_loss += loss
 
-    return total_loss
+    return contrastive_loss
+
+
+def compute_reconstructive_loss(features_dict):
+    """
+    Compute the reconstructive loss bases on color prediction for points and their gt color
+    Args:
+        features_dict: the data dict containing gt and predicted colors of points
+
+    Returns: loss tensor
+    """
+    reconstructive_loss = 0.0
+    # for k, v in features_dict:
+    for i in ["1", "2"]:
+        pred_key, gt_key = f"view{i}_color_prediction", f"view{i}_color_gt"
+        if pred_key in features_dict and gt_key in features_dict:
+
+            input_feature = features_dict[pred_key]
+            gt_feature = features_dict[gt_key]
+            reconstructive_loss += F.mse_loss(input_feature, gt_feature)
+        else:
+            if pred_key not in features_dict:
+                print(f"WARNING: pred key ({pred_key}) not found")
+            if gt_key not in features_dict:
+                print(f"WARNING: gt key ({gt_key}) not found")
+    return reconstructive_loss
+
 
 def combine_features(all_features_dict_branch: Dict, features_dict_branch: Dict):
     """
@@ -265,6 +302,23 @@ def combine_features(all_features_dict_branch: Dict, features_dict_branch: Dict)
         if level not in all_features_dict_branch:
             all_features_dict_branch[level] = []  # Initialize if the level doesn't exist
         all_features_dict_branch[level].extend(tensors)  # Append tensors
+
+
+def mask_color(color_tensor, keep=0.01):
+    """
+
+    Args:
+        color_tensor: shape (N,3)?
+        keep: fraction of the points to be kept. Rest gets black
+
+    Returns: color_tensor where most colors are black
+
+    """
+    n = color_tensor.shape[0]
+    random_mask = torch.rand(n).unsqueeze(1).repeat(1, 3).to(color_tensor.device)
+    color_tensor_masked = torch.where(random_mask < keep, color_tensor, torch.zeros_like(color_tensor))
+
+    return color_tensor_masked
 
 
 @MODELS.register_module("DBBD-v1m1")
@@ -299,6 +353,12 @@ class DBBD(nn.Module):
         view2_coord = data_dict["view2_coord"]
         view2_color = data_dict["view2_color"]
         view2_offset = data_dict["view2_offset"].int()
+
+        data_dict["view1_color_gt"] = view1_color.clone()
+        data_dict["view2_color_gt"] = view2_color.clone()
+
+        view1_color = mask_color(view1_color, keep=0.01)
+        view2_color = mask_color(view2_color, keep=0.01)
         
         xyzrgb1 = torch.cat((view1_coord, view1_color), dim=1)
         xyzrgb2 = torch.cat((view2_coord, view2_color), dim=1)
@@ -319,9 +379,12 @@ class DBBD(nn.Module):
         # transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_coord_split)}
         batch_hierarchical_regions = data_dict['regions']
 
+        data_dict[f"view1_color_prediction"] = torch.zeros_like(data_dict["view1_color_gt"])
+        data_dict[f"view2_color_prediction"] = torch.zeros_like(data_dict["view2_color_gt"])
+
         # Encode and process with shared encoder using the same regions
-        encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
-        encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels,output_dim=self.output_dim)
+        _, data_dict = encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict, output_dim=self.output_dim, data_dict=data_dict)
+        _, data_dict = encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels, output_dim=self.output_dim, data_dict=data_dict)
 
         # Initialize dictionaries for accumulating features across batches
         all_features_dict_branch1 = {}
@@ -339,7 +402,9 @@ class DBBD(nn.Module):
             combine_features(all_features_dict_branch2, features_dict_branch2)
 
         # Compute loss for this sample
-        loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2, self.criterion)
-        total_loss += loss
-        result_dict = dict(loss=total_loss)
+        contrastive_loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2, self.criterion, device=view1_coord.device)
+        total_loss += contrastive_loss
+        reconstruction_loss = compute_reconstructive_loss(data_dict) + compute_reconstructive_loss(data_dict)
+        total_loss += reconstruction_loss
+        result_dict = dict(loss=total_loss, contrastive_loss=contrastive_loss, reconstruction_loss=reconstruction_loss)
         return result_dict
