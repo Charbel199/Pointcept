@@ -92,6 +92,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     next_level_sub_regions = []
     for i, reg in enumerate(region):
         reg['super_point_branch1'] = batched_region_feature[i] # (output_dim,)
+        reg['super_point1'] = batched_point_features[i] # (N,output_dim)
         reg['level_branch1'] = level 
 
         # Duplicate in parent_feature array based on number of upcoming subregions
@@ -189,6 +190,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
+            reg['super_point2'] = batched_point_features[i] # (N,output_dim)
             reg['level_branch2'] = level 
 
     return region
@@ -214,6 +216,27 @@ def collect_region_features_per_level(region: Dict[str, Any],
     for sub_region in region['sub_regions']:
         collect_region_features_per_level(sub_region, features_dict_branch1, features_dict_branch2)
 
+
+def collect_region_features_per_points(region: Dict[str, Any],
+                                      features_dict_branch1: Dict[int, List[torch.Tensor]],
+                                      features_dict_branch2: Dict[int, List[torch.Tensor]]) -> None:
+    # Collect features from Branch 1
+    if 'super_point1' in region:
+        level1 = region['level_branch1']
+        if level1 not in features_dict_branch1:
+            features_dict_branch1[level1] = []
+        features_dict_branch1[level1].append(region['super_point1'])
+
+    # Collect features from Branch 2
+    if 'super_point2' in region:
+        level2 = region['level_branch2']
+        if level2 not in features_dict_branch2:
+            features_dict_branch2[level2] = []
+        features_dict_branch2[level2].append(region['super_point2'])
+
+    # Recursively collect from sub-regions
+    for sub_region in region['sub_regions']:
+        collect_region_features_per_points(sub_region, features_dict_branch1, features_dict_branch2)
 
 def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[torch.Tensor]],
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
@@ -251,6 +274,47 @@ def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[tor
 
     return total_loss
 
+def compute_contrastive_loss_per_points(features_dict_branch1: Dict[int, List[torch.Tensor]],
+                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
+                                        temperature: float = 0.07, device="cuda") -> torch.Tensor:
+    total_loss = 0.0
+    criterion = nn.CrossEntropyLoss()
+
+    for level in features_dict_branch1.keys():
+        features_branch1 = features_dict_branch1[level]
+        features_branch2 = features_dict_branch2.get(level, [])
+
+        # Skip if no corresponding features for the second branch
+        if not features_branch2:
+            continue
+
+        if len(features_branch1) != len(features_branch2):
+            print(f"Mismatch at level {level}: {len(features_branch1)} vs {len(features_branch2)} features")
+            continue
+
+        # Stack the features into tensors and move to the specified device
+        features_branch1_tensor = torch.stack(features_branch1).to(device)
+        features_branch2_tensor = torch.stack(features_branch2).to(device)
+
+        # Normalize features along the feature dimension (dim=2)
+        features_branch1_tensor = F.normalize(features_branch1_tensor, dim=2)
+        features_branch2_tensor = F.normalize(features_branch2_tensor, dim=2)
+        
+        # Compute the logits (similarity between all pairs in the batch)
+        # We use bmm for batch matrix multiplication
+        logits = torch.bmm(features_branch1_tensor, features_branch2_tensor.transpose(1, 2)) / temperature
+
+        # labels are the identity labels (diagonal elements are positive pairs)
+        batch_size, seq_len, _ = logits.shape
+        labels = torch.arange(seq_len).long().to(device)
+
+        # Compute the loss per batch
+        loss = criterion(logits.view(-1, seq_len), labels.repeat(batch_size).view(-1))
+        
+        total_loss += loss
+
+    return total_loss
+
 def combine_features(all_features_dict_branch: Dict, features_dict_branch: Dict):
     """
     Combine tensors from the current batch into an accumulated dictionary of features.
@@ -276,7 +340,8 @@ class DBBD(nn.Module):
         num_samples_per_level,
         max_levels,
         output_dim,
-        device
+        device,
+        loss_method
 
     ):
         super().__init__()
@@ -287,6 +352,7 @@ class DBBD(nn.Module):
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
+        self.loss_method = loss_method
 
     def forward(self, data_dict):
         total_loss = 0.0
@@ -326,20 +392,32 @@ class DBBD(nn.Module):
         # Initialize dictionaries for accumulating features across batches
         all_features_dict_branch1 = {}
         all_features_dict_branch2 = {}
+        all_features_points_dict_branch1 = {}
+        all_features_points_dict_branch2 = {}
         for i in range(len(offsets)):
             hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
             # Collect features
             features_dict_branch1 = {}
             features_dict_branch2 = {}
-
+            features_dict_points_branch1 = {}
+            features_dict_points_branch2 = {}
+            collect_region_features_per_points(hierarchical_regions,features_dict_points_branch1,features_dict_points_branch2)
             collect_region_features_per_level(hierarchical_regions, features_dict_branch1, features_dict_branch2)
 
             # Combine features across batches
             combine_features(all_features_dict_branch1, features_dict_branch1)
             combine_features(all_features_dict_branch2, features_dict_branch2)
 
+            combine_features(all_features_points_dict_branch1, features_dict_points_branch1)
+            combine_features(all_features_points_dict_branch2, features_dict_points_branch2)
+
         # Compute loss for this sample
-        loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
+        #LOSS per level
+        if self.loss_method in ["level"]:
+            loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
+        #LOSS per point
+        elif self.loss_method in ["point"]:
+            loss = compute_contrastive_loss_per_points(all_features_points_dict_branch1, all_features_points_dict_branch2)
         total_loss += loss
         result_dict = dict(loss=total_loss)
         return result_dict

@@ -1,9 +1,9 @@
 _base_ = ["../_base_/default_runtime.py"]
-mx_lvl = 2
-num_samples_per_level=3
-point_max=250000
+mx_lvl = 0
+num_samples_per_level=2
+point_max=20000
 dataset_type = "S3DISDataset"
-data_root = "data/s3dis-350k"
+data_root = "data/s3dis-new"
 
 # misc custom setting
 batch_size = 2  # bs: total bs in all gpus
@@ -53,7 +53,9 @@ model = dict(
         pdnorm_conditions=("ScanNet", "S3DIS", "Structured3D"),
     ),
     output_dim=128,
-    device = "cuda"
+    device = "cuda",
+    loss_method = "point"
+    # loss_method = "level"
 )
 
 
