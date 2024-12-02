@@ -73,7 +73,7 @@ class MultiDatasetDataloader:
                     pin_memory=True,
                     worker_init_fn=init_fn,
                     drop_last=True,
-                    persistent_workers=True,
+                    persistent_workers=False,
                 )
             )
         self.sampler = MultiDatasetDummySampler()

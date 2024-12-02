@@ -34,6 +34,8 @@ class DefaultDataset(Dataset):
 
     def __init__(
         self,
+        num_samples_per_level=None,
+        max_levels=None,
         split="train",
         data_root="data/dataset",
         transform=None,
@@ -44,6 +46,8 @@ class DefaultDataset(Dataset):
         loop=1,
     ):
         super(DefaultDataset, self).__init__()
+        self.max_levels = max_levels
+        self.num_samples_per_level = num_samples_per_level
         self.data_root = data_root
         self.split = split
         self.transform = Compose(transform)

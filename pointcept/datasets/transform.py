@@ -7,6 +7,7 @@ Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
 
+from typing import List, Dict, Any, Tuple
 import random
 import numbers
 import scipy
@@ -19,6 +20,7 @@ import copy
 from collections.abc import Sequence, Mapping
 
 from pointcept.utils.registry import Registry
+from .preprocessing.hierarchical_region_proposal import hierarchical_region_proposal
 
 TRANSFORMS = Registry("transforms")
 
@@ -69,6 +71,19 @@ class Copy(object):
 
 
 @TRANSFORMS.register_module()
+class DBDD(object):
+    def __init__(self,num_samples_per_level:int, max_levels:int, min_num_points_list:List[int]):
+        self.max_levels = max_levels
+        self.num_samples_per_level = num_samples_per_level
+        self.min_num_points_list = min_num_points_list
+
+    def __call__(self, data_dict):
+        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list)
+        data_dict["regions"] = regions
+        return data_dict
+    
+
+@TRANSFORMS.register_module()
 class ToTensor(object):
     def __call__(self, data):
         if isinstance(data, torch.Tensor):
@@ -87,7 +102,9 @@ class ToTensor(object):
         elif isinstance(data, np.ndarray) and np.issubdtype(data.dtype, np.floating):
             return torch.from_numpy(data).float()
         elif isinstance(data, Mapping):
-            result = {sub_key: self(item) for sub_key, item in data.items()}
+            result = {}
+            for sub_key, item in data.items():
+                result[sub_key] = self(item) if sub_key != "regions" else item
             return result
         elif isinstance(data, Sequence):
             result = [self(item) for item in data]
@@ -719,6 +736,31 @@ class RandomColorDrop(object):
 
 
 @TRANSFORMS.register_module()
+class PartialColorDrop(object):
+    def __init__(self, p=0.2):
+        self.p = p
+
+    def __call__(self, data_dict):
+        if "color" in data_dict.keys():
+            n = data_dict["color"].shape[0]
+            zeros = np.zeros_like(data_dict["color"])
+            mask = np.repeat(np.random.rand(n)[:, np.newaxis], 3, axis=1)
+            data_dict["color"] = np.where(mask < self.p, data_dict["color"], zeros)
+        return data_dict
+
+    def torch_call(self, data_dict):
+        if "color" in data_dict.keys():
+            n = data_dict["color"].shape[0]
+            zeros = torch.zeros_like(data_dict["color"])
+            mask = torch.rand(n).unsqueeze(1).repeat(1, 3).to(data_dict["color"].device)
+            data_dict["color"] = torch.where(mask < self.p, data_dict["color"], zeros)
+        return data_dict
+
+    def __repr__(self):
+        return "PartialColorDrop(p: {})".format(self.p)
+
+
+@TRANSFORMS.register_module()
 class ElasticDistortion(object):
     def __init__(self, distortion_params=None):
         self.distortion_params = (
@@ -1145,4 +1187,134 @@ class Compose(object):
     def __call__(self, data_dict):
         for t in self.transforms:
             data_dict = t(data_dict)
+        return data_dict
+
+
+@TRANSFORMS.register_module()
+class HierarchicalRegions(object):
+    def __init__(
+        self,
+        num_samples_per_level=16,
+        max_levels=3,
+        view_keys=("coord", "color", "normal", "origin_coord"),
+        view_trans_cfg=None,
+    ):
+        self.num_samples_per_level = num_samples_per_level
+        self.max_levels = max_levels
+        self.view_keys = view_keys  # TODO: use?
+        self.view_trans = Compose(view_trans_cfg)
+
+    @staticmethod
+    def assign_points_to_regions(points: np.ndarray, centers: np.ndarray) -> List[List[int]]:
+        """
+        Assign each point to the nearest region center.
+
+        :param points: (N, 3) array of points.
+        :param centers: (M, 3) array of region centers.
+        :return: List of lists, each containing the indices of points in the corresponding region.
+        """
+        if points.size == 0 or centers.size == 0:
+            return [[] for _ in range(len(centers))]
+
+        num_points = points.shape[0]
+        regions = [[] for _ in range(len(centers))]
+
+        distances = np.linalg.norm(points[:, None, :] - centers[None, :, :], axis=2)  # Shape: (N, M)
+        nearest_centers = np.argmin(distances, axis=1)  # Shape: (N,)
+
+        for i in range(num_points):
+            regions[nearest_centers[i]].append(i)
+
+        return regions
+
+    @staticmethod
+    def farthest_point_sampling(points: np.ndarray, num_samples: int) -> np.ndarray:
+        """
+        Perform Farthest Point Sampling (FPS) on a set of points.
+
+        :param points: (N, 3) array of point positions.
+        :param num_samples: Number of points to sample.
+        :return: (num_samples, 3) array of sampled point positions.
+        """
+        N, _ = points.shape
+        sampled_indices = np.zeros(num_samples, dtype=int)
+        distances = np.full(N, np.inf)
+
+        # Randomly select the first point
+        selected_idx = np.random.randint(N)
+        sampled_indices[0] = selected_idx
+
+        for i in range(1, num_samples):
+            current_point = points[selected_idx, :]
+            dist = np.linalg.norm(points - current_point, axis=1)
+            distances = np.minimum(distances, dist)
+            selected_idx = np.argmax(distances)
+            sampled_indices[i] = selected_idx
+
+        sampled_points = points[sampled_indices]
+        return sampled_points
+
+    @staticmethod
+    def hierarchical_region_proposal(points: np.ndarray, num_samples_per_level: int, max_levels: int, batch_idx: int) -> Dict[str, Any]:
+        """
+        Generate hierarchical regions using FPS.
+
+        :param points: (N, D) array of points (coordinates + attributes).
+        :param num_samples_per_level: Number of points to sample at each level.
+        :param max_levels: Maximum depth of the hierarchy.
+        :param batch_idx: Batch index for tracking.
+        :return: Hierarchical regions as a dictionary.
+        """
+
+        def recursive_fps(points: np.ndarray, level: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+            if level >= max_levels or len(points) <= num_samples_per_level:
+                return None, []
+
+            points_pos = points[:, :3]
+            sampled_centers = HierarchicalRegions.farthest_point_sampling(points_pos, num_samples_per_level)
+            regions_pts_indices = HierarchicalRegions.assign_points_to_regions(points_pos, sampled_centers)
+
+            hierarchical_regions = []
+            for center, region_indices in zip(sampled_centers, regions_pts_indices):
+                region_points = points[region_indices]  # (N_region, D)
+
+                # Discard Regions with too little points
+                if region_points.shape[0] <= 5:
+                    return None, []
+                else:
+                    _, sub_regions = recursive_fps(region_points, level + 1)
+                    hierarchical_regions.append({
+                        'center': center,
+                        'points': region_points,
+                        'points_indices': region_indices,
+                        'sub_regions': sub_regions,
+                        'batch_idx': batch_idx  # TODO: remove batch index?
+                    })
+
+            return sampled_centers, hierarchical_regions
+
+        _, hierarchical_regions = recursive_fps(points, 0)
+        return {
+            'points': points,
+            'points_indices': np.arange(len(points)),
+            'sub_regions': hierarchical_regions,
+            'batch_idx': batch_idx
+        }
+
+    def __call__(self, data_dict):
+        points = data_dict["coord"]
+        regions = HierarchicalRegions.hierarchical_region_proposal(points, self.num_samples_per_level, self.max_levels, batch_idx=0)  # TODO: fix batch_idx
+        data_dict["regions"] = regions  # TODO: should this be handled somewhere else?
+
+        view1_dict = dict()
+        view2_dict = dict()
+        for key in self.view_keys:
+            view1_dict[key] = data_dict[key].copy()
+            view2_dict[key] = data_dict[key].copy()
+        view1_dict = self.view_trans(view1_dict)
+        view2_dict = self.view_trans(view2_dict)
+        for key, value in view1_dict.items():
+            data_dict["view1_" + key] = value
+        for key, value in view2_dict.items():
+            data_dict["view2_" + key] = value
         return data_dict

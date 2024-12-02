@@ -45,6 +45,14 @@ def point_collate_fn(batch, mix_prob=0):
     assert isinstance(
         batch[0], Mapping
     )  # currently, only support input_dict, rather than input_list
+    region_batch = []
+    for i, dictionary in enumerate(batch):
+        region_dict = dictionary.pop("regions") if "regions" in dictionary else None
+        if region_dict is not None:
+            region_dict["batch_idx"] = i
+        region_batch.append(region_dict)
+    
+    
     batch = collate_fn(batch)
     if "offset" in batch.keys():
         # Mix3d (https://arxiv.org/pdf/2110.02210.pdf)
@@ -52,6 +60,7 @@ def point_collate_fn(batch, mix_prob=0):
             batch["offset"] = torch.cat(
                 [batch["offset"][1:-1:2], batch["offset"][-1].unsqueeze(0)], dim=0
             )
+    batch["regions"] = region_batch
     return batch
 
 
