@@ -73,11 +73,9 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
 
     # Encode
     if batched_tensor.shape[2] == 6:
-    # if batched_tensor.shape[2] == 3:
         padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
     elif batched_tensor.shape[2] ==output_dim:
         padding_size = (0, 6)
-        # padding_size = (0, 3)
     else:
         print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
@@ -137,13 +135,10 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = torch.stack(super_points_from_previous_level) # (levelB, C)
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
-        # Encode
-        # if batched_tensor.shape[2] == 3:
         if batched_tensor.shape[2] == 6:
             padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
         elif batched_tensor.shape[2] ==output_dim:
             padding_size = (0, 6)
-            # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
@@ -175,11 +170,9 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
         # Encode
         if batched_tensor.shape[2] == 6:
-        # if batched_tensor.shape[2] == 3:
             padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
         elif batched_tensor.shape[2] ==output_dim:
             padding_size = (0, 6)
-            # padding_size = (0, 3)
         else:
             print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
@@ -375,48 +368,48 @@ class DBBD(nn.Module):
 
         view1_batch_count = view1_batch.bincount()
         view2_batch_count = view2_batch.bincount()
-        # view1_coord_split = view1_coord.split(list(view1_batch_count))
-        # view2_coord_split = view2_coord.split(list(view2_batch_count))
         view1_xyzrgb_split = xyzrgb1.split(list(view1_batch_count))
         view2_xyzrgb_split = xyzrgb2.split(list(view2_batch_count))
         transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_xyzrgb_split)}
         transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_xyzrgb_split)}
-        # transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_coord_split)}
-        # transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_coord_split)}
         batch_hierarchical_regions = data_dict['regions']
 
         # Encode and process with shared encoder using the same regions
         encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
         encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels,output_dim=self.output_dim)
 
-        # Initialize dictionaries for accumulating features across batches
-        all_features_dict_branch1 = {}
-        all_features_dict_branch2 = {}
-        all_features_points_dict_branch1 = {}
-        all_features_points_dict_branch2 = {}
-        for i in range(len(offsets)):
-            hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
-            # Collect features
-            features_dict_branch1 = {}
-            features_dict_branch2 = {}
-            features_dict_points_branch1 = {}
-            features_dict_points_branch2 = {}
-            collect_region_features_per_points(hierarchical_regions,features_dict_points_branch1,features_dict_points_branch2)
-            collect_region_features_per_level(hierarchical_regions, features_dict_branch1, features_dict_branch2)
-
-            # Combine features across batches
-            combine_features(all_features_dict_branch1, features_dict_branch1)
-            combine_features(all_features_dict_branch2, features_dict_branch2)
-
-            combine_features(all_features_points_dict_branch1, features_dict_points_branch1)
-            combine_features(all_features_points_dict_branch2, features_dict_points_branch2)
-
         # Compute loss for this sample
         #LOSS per level
         if self.loss_method in ["level"]:
+            # Initialize dictionaries for accumulating features across batches
+            all_features_dict_branch1 = {}
+            all_features_dict_branch2 = {}
+            for i in range(len(offsets)):
+                hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
+                # Collect features
+                features_dict_branch1 = {}
+                features_dict_branch2 = {}
+                collect_region_features_per_level(hierarchical_regions, features_dict_branch1, features_dict_branch2)
+
+                # Combine features across batches
+                combine_features(all_features_dict_branch1, features_dict_branch1)
+                combine_features(all_features_dict_branch2, features_dict_branch2)
             loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
         #LOSS per point
         elif self.loss_method in ["point"]:
+            # Initialize dictionaries for accumulating features across batches
+            all_features_points_dict_branch1 = {}
+            all_features_points_dict_branch2 = {}
+            for i in range(len(offsets)):
+                hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
+                # Collect features
+                features_dict_points_branch1 = {}
+                features_dict_points_branch2 = {}
+                collect_region_features_per_points(hierarchical_regions,features_dict_points_branch1,features_dict_points_branch2)
+
+                # Combine features across batches
+                combine_features(all_features_points_dict_branch1, features_dict_points_branch1)
+                combine_features(all_features_points_dict_branch2, features_dict_points_branch2)
             loss = compute_contrastive_loss_per_points(all_features_points_dict_branch1, all_features_points_dict_branch2)
         total_loss += loss
         result_dict = dict(loss=total_loss)

@@ -1,9 +1,11 @@
 _base_ = ["../_base_/default_runtime.py"]
-mx_lvl = 0
+
+mx_lvl = 2
 num_samples_per_level=2
 point_max=20000
 dataset_type = "S3DISDataset"
 data_root = "data/s3dis-new"
+min_num_points_list = [5000,50]
 
 # misc custom setting
 batch_size = 2  # bs: total bs in all gpus
@@ -100,18 +102,10 @@ data = dict(
                     dict(type="ChromaticJitter", p=0.95, std=0.05),
                     dict(type="Copy", keys_dict={"coord": "grid_coord"}),
                     dict(type="CenterShift", apply_z=False),
-                    dict(type="NormalizeColor"),
-                    # dict(
-                    # type="GridSample",
-                    #     grid_size=0.05,
-                    #     hash_type="fnv",
-                    #     mode="train",
-                    #     keys=("coord", "color"),
-                    #     return_grid_coord=True,
-                    # )
+                    dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl),
+            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -164,18 +158,10 @@ data = dict(
                     dict(type="ChromaticJitter", p=0.95, std=0.05),
                     dict(type="Copy", keys_dict={"coord": "grid_coord"}),
                     dict(type="CenterShift", apply_z=False),
-                    dict(type="NormalizeColor"),
-                    # dict(
-                    # type="GridSample",
-                    #     grid_size=0.05,
-                    #     hash_type="fnv",
-                    #     mode="train",
-                    #     keys=("coord", "color"),
-                    #     return_grid_coord=True,
-                    # )
+                    dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl),
+            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
             dict(type="ToTensor"),
             dict(
                 type="Collect",

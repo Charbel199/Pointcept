@@ -51,7 +51,7 @@ def farthest_point_sampling(points: np.ndarray, num_samples: int) -> np.ndarray:
     sampled_points = points[sampled_indices]
     return sampled_points
 
-def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_samples_per_level: int, max_levels: int, batch_idx: int, max_num_points: int = 30000) -> Dict[str, Any]:
+def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_samples_per_level: int, max_levels: int, batch_idx: int,min_num_points_list:List[int], max_num_points: int = 30000) -> Dict[str, Any]:
     """
     Generate hierarchical regions using FPS.
 
@@ -62,14 +62,14 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
     :param batch_idx: Batch index for tracking.
     :return: Hierarchical regions as a dictionary.
     """
-    def recursive_fps(points: np.ndarray, colors: np.ndarray, level: int) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    def recursive_fps(points: np.ndarray, colors: np.ndarray, level: int, min_num_points_list:List[int]) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
         if level >= max_levels or len(points) <= num_samples_per_level:
             return None, []
 
-        if level == 0:
-            min_num_points_per_pointcloud = 20000
-        # elif level == 1:
-        #     min_num_points_per_pointcloud = 5
+        if level > len(min_num_points_list):
+            raise Exception("The 'min_num_points_list' must contain values for all levels.")
+        else:
+            min_num_points_per_pointcloud = min_num_points_list[level]
 
         points_pos = points[:, :3]
         sampled_centers = farthest_point_sampling(points_pos, num_samples_per_level)
@@ -83,7 +83,7 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
             region_indices = np.random.choice(region_indices, size=min_num_points_per_pointcloud, replace=False)
             region_points = points[region_indices]  # (N_region, D)
             region_colors = colors[region_indices]
-            _, sub_regions = recursive_fps(region_points,points_rgb, level + 1)
+            _, sub_regions = recursive_fps(region_points,points_rgb, level + 1,min_num_points_list=min_num_points_list)
             hierarchical_regions.append({
                 'center': center,
                 'points': region_points,
@@ -95,7 +95,7 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
 
         return sampled_centers, hierarchical_regions
 
-    _, hierarchical_regions = recursive_fps(points,points_rgb, 0)
+    _, hierarchical_regions = recursive_fps(points,points_rgb, 0,min_num_points_list=min_num_points_list)
     return {
         'points': points,
         'points': points_rgb,
