@@ -1,4 +1,9 @@
 _base_ = ["../_base_/default_runtime.py"]
+mx_lvl = 2
+num_samples_per_level=3
+point_max=250000
+dataset_type = "S3DISDataset"
+data_root = "data/s3dis-350k"
 
 # misc custom setting
 batch_size = 2  # bs: total bs in all gpus
@@ -12,8 +17,8 @@ find_unused_parameters = False
 # model settings
 model = dict(
     type="DBBD-v1m1",
-    num_samples_per_level=2,
-    max_levels=1,
+    num_samples_per_level=num_samples_per_level,
+    max_levels=mx_lvl,
     backbone=dict(
         type="PT-v3m1",
         in_channels=128+6,
@@ -66,18 +71,17 @@ scheduler = dict(
 param_dicts = [dict(keyword="block", lr=0.0006)]
 
 # dataset settings
-dataset_type = "S3DISDataset"
-data_root = "data/s3dis2"
+
 data = dict(
     train=dict(
         type=dataset_type,
         split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
         data_root=data_root,
-        num_samples_per_level=2,
-        max_levels=1,
+        num_samples_per_level=num_samples_per_level,
+        max_levels=mx_lvl,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=80000),
+            dict(type="SphereCrop", point_max=point_max),
             dict(type="Copy", keys_dict={"coord": "origin_coord"}),
             dict(
                 type="ContrastiveViewsGenerator",
@@ -105,7 +109,7 @@ data = dict(
                     # )
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=2,max_levels=1),
+            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -133,12 +137,12 @@ data = dict(
     val=dict(
         type=dataset_type,
         split="Area_5",
-        num_samples_per_level=2,
-        max_levels=1,
+        num_samples_per_level=num_samples_per_level,
+        max_levels=mx_lvl,
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=5000),
+            dict(type="SphereCrop", point_max=point_max),
             dict(
                 type="RandomDropout", dropout_ratio=0.2, dropout_application_ratio=0.2
             ),
@@ -169,7 +173,7 @@ data = dict(
                     # )
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=2,max_levels=1),
+            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -195,11 +199,11 @@ data = dict(
         type=dataset_type,
         split="Area_5",
         data_root=data_root,
-        num_samples_per_level=2,
-        max_levels=1,
+        num_samples_per_level=num_samples_per_level,
+        max_levels=mx_lvl,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=5000),
+            dict(type="SphereCrop", point_max=point_max),
             dict(type="NormalizeColor"),
         ],
         test_mode=True,
