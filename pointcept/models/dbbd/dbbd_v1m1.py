@@ -17,7 +17,7 @@ from pointcept.models.builder import MODELS, build_model
 from pointcept.models.utils import offset2batch
 
 
-def inference(encoder, points_tensor, padding_size):
+def inference(encoder, points_tensor, transformed_points=None):
     # Encode the points using the dynamic encoder
     device = points_tensor.device
     resized_points_tensor = points_tensor.reshape(points_tensor.shape[0] *  points_tensor.shape[1], points_tensor.shape[2]) # (B, N, D) -> (B*N, D)
@@ -28,10 +28,15 @@ def inference(encoder, points_tensor, padding_size):
     offset_arr = torch.tensor(offset_arr,device=device)
 
 
-    points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 0.01,
+    # points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 0.01,
+    #                "offset": offset_arr}
+
+    #point_dict issue for sparseconv (New encoder)
+    points_dict = {"feat": transformed_points["feat"],"coord": resized_points_tensor[:, :3], "grid_coord": transformed_points['grid_coord'], "grid_size": 0.01,
                    "offset": offset_arr}
-    point_features = encoder(points_dict)["feat"]
-    point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
+    # point_features = encoder(points_dict)["feat"]
+    point_features = encoder(points_dict) # (N,number of classes)
+    # point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
 
     batch = offset2batch(offset_arr)
     batch_count = batch.bincount()
@@ -45,7 +50,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                          encoder, 
                          aggregator,
                          propagation_method, 
-                         transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
+                         transformed_points, # (B, N0, 3)
                          parent_feature: List[torch.Tensor] = None, # (levelB, ) if there's a parent feature list, 
                          level: int = 0,
                          output_dim=128) -> List[Dict[str, Any]]:
@@ -53,9 +58,10 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # Iterate through regions and get corresponding indices then points from transformed points -> List of points vectors (levelB, levelN, D)
     points_tensor_list = []
+    
     for i, reg in enumerate(region):
         batch_idx = reg['batch_idx']
-        corresponding_transformed_points = transformed_points[batch_idx]
+        corresponding_transformed_points = transformed_points["coord"][batch_idx]
         indices = np.array(reg['points_indices'], dtype=int) # (levelN,)
   
         if len(indices) == 0:
@@ -72,14 +78,14 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
     # Encode
-    if batched_tensor.shape[2] == 6:
-        padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-    elif batched_tensor.shape[2] ==output_dim:
-        padding_size = (0, 6)
-    else:
-        print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+    # if batched_tensor.shape[2] == 6:
+    #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+    # elif batched_tensor.shape[2] ==output_dim:
+    #     padding_size = (0, 6)
+    # else:
+    #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
-    batched_point_features = inference(encoder, batched_tensor, padding_size)
+    batched_point_features = inference(encoder, batched_tensor, transformed_points)
 
     # Aggregate
     batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
@@ -110,7 +116,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
 def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...) 
                          encoder, 
                          aggregator,
-                         transformed_points: Dict[int, np.ndarray], # (B, N0, 3)
+                         transformed_points, # (B, N0, 3)
                          level: int = 0,
                          max_levels: int = 1,
                          output_dim=128) -> Dict[str, Any]:
@@ -135,14 +141,14 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = torch.stack(super_points_from_previous_level) # (levelB, C)
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
-        if batched_tensor.shape[2] == 6:
-            padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-        elif batched_tensor.shape[2] ==output_dim:
-            padding_size = (0, 6)
-        else:
-            print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+        # if batched_tensor.shape[2] == 6:
+        #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+        # elif batched_tensor.shape[2] ==output_dim:
+        #     padding_size = (0, 6)
+        # else:
+        #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
-        batched_point_features = inference(encoder, batched_tensor, padding_size)
+        batched_point_features = inference(encoder, batched_tensor,transformed_points )
 
         # Aggregate
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
@@ -156,7 +162,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         points_tensor_list = []
         for i, reg in enumerate(region):
             batch_idx = reg['batch_idx']
-            corresponding_transformed_points = transformed_points[batch_idx]
+            corresponding_transformed_points = transformed_points["coord"][batch_idx]
             indices = np.array(reg['points_indices'], dtype=int) # (levelN,)
     
             if len(indices) == 0:
@@ -168,15 +174,15 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
 
-        # Encode
-        if batched_tensor.shape[2] == 6:
-            padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-        elif batched_tensor.shape[2] ==output_dim:
-            padding_size = (0, 6)
-        else:
-            print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
+        # # Encode
+        # if batched_tensor.shape[2] == 6:
+        #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
+        # elif batched_tensor.shape[2] ==output_dim:
+        #     padding_size = (0, 6)
+        # else:
+        #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
-        batched_point_features = inference(encoder, batched_tensor, padding_size)
+        batched_point_features = inference(encoder, batched_tensor,transformed_points )
         # Aggregate
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
@@ -350,33 +356,70 @@ class DBBD(nn.Module):
     def forward(self, data_dict):
         total_loss = 0.0
 
-        offsets = data_dict["offset"]
-
+        view1_origin_coord = data_dict["view1_origin_coord"]
         view1_coord = data_dict["view1_coord"]
-        view1_color = data_dict["view1_color"]
+        view1_feat = data_dict["view1_feat"]
         view1_offset = data_dict["view1_offset"].int()
-        view2_coord = data_dict["view2_coord"]
-        view2_color = data_dict["view2_color"]
-        view2_offset = data_dict["view2_offset"].int()
-        
-        xyzrgb1 = torch.cat((view1_coord, view1_color), dim=1)
-        xyzrgb2 = torch.cat((view2_coord, view2_color), dim=1)
 
-        # union origin coord
+        view2_origin_coord = data_dict["view2_origin_coord"]
+        view2_coord = data_dict["view2_coord"]
+        view2_feat = data_dict["view2_feat"]
+        view2_offset = data_dict["view2_offset"].int()
+
+        # # union origin coord
         view1_batch = offset2batch(view1_offset)
         view2_batch = offset2batch(view2_offset)
 
         view1_batch_count = view1_batch.bincount()
         view2_batch_count = view2_batch.bincount()
-        view1_xyzrgb_split = xyzrgb1.split(list(view1_batch_count))
-        view2_xyzrgb_split = xyzrgb2.split(list(view2_batch_count))
+        view1_xyzrgb_split = view1_coord.split(list(view1_batch_count))
+        view2_xyzrgb_split = view2_coord.split(list(view2_batch_count))
         transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_xyzrgb_split)}
         transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_xyzrgb_split)}
         batch_hierarchical_regions = data_dict['regions']
 
-        # Encode and process with shared encoder using the same regions
-        encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
-        encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, transformed_points_X2_dict, max_levels=self.max_levels,output_dim=self.output_dim)
+        view1_data_dict = dict(
+            origin_coord=view1_origin_coord,
+            coord=transformed_points_X1_dict,
+            feat=view1_feat,
+            offset=view1_offset,
+        )
+        view2_data_dict = dict(
+            origin_coord=view2_origin_coord,
+            coord=transformed_points_X2_dict,
+            feat=view2_feat,
+            offset=view2_offset,
+        )
+        # view1_data_dict = dict(
+        #     origin_coord=view1_origin_coord,
+        #     coord=view1_coord,
+        #     feat=view1_feat,
+        #     offset=view1_offset,
+        # )
+        # view2_data_dict = dict(
+        #     origin_coord=view2_origin_coord,
+        #     coord=view2_coord,
+        #     feat=view2_feat,
+        #     offset=view2_offset,
+        # )
+
+        # SparseConv based method need grid coord
+        if "view1_grid_coord" in data_dict.keys():
+            view1_data_dict["grid_coord"] = data_dict["view1_grid_coord"]
+        if "view2_grid_coord" in data_dict.keys():
+            view2_data_dict["grid_coord"] = data_dict["view2_grid_coord"]
+
+        # view1_feat = self.point_encoder(view1_data_dict)
+        # view2_feat = self.point_encoder(view2_data_dict)
+
+        
+
+        
+        
+        # # Encode and process with shared encoder using the same regions
+        # # encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
+        encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, view1_data_dict,output_dim=self.output_dim)
+        encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, view2_data_dict, max_levels=self.max_levels,output_dim=self.output_dim)
 
         # Compute loss for this sample
         #LOSS per level
@@ -384,7 +427,7 @@ class DBBD(nn.Module):
             # Initialize dictionaries for accumulating features across batches
             all_features_dict_branch1 = {}
             all_features_dict_branch2 = {}
-            for i in range(len(offsets)):
+            for i in range(len(view1_offset)):
                 hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
                 # Collect features
                 features_dict_branch1 = {}
@@ -400,7 +443,7 @@ class DBBD(nn.Module):
             # Initialize dictionaries for accumulating features across batches
             all_features_points_dict_branch1 = {}
             all_features_points_dict_branch2 = {}
-            for i in range(len(offsets)):
+            for i in range(len(view1_offset)):
                 hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
                 # Collect features
                 features_dict_points_branch1 = {}
