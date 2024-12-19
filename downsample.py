@@ -30,21 +30,25 @@ def process_npy_files(root_dir):
                 shutil.rmtree(dirpath)
                 print(f"Deleted directory: {dirpath}")
             else:
+                shared_indices = None
                 # If directory is not flagged for deletion, sample data for each file
                 for file_name in required_files:
                     file_path = os.path.join(dirpath, file_name)
                     data = np.load(file_path)
 
-                    # Randomly select 30,000 points (or keep all points if there are fewer than 30,000)
-                    if data.shape[0] >= 30000:
-                        indices = np.random.choice(data.shape[0], 30000, replace=False)
-                        sampled_data = data[indices]
-                    else:
-                        sampled_data = data
+                    # Generate indices only once, based on the first file's size
+                    if shared_indices is None:
+                        if data.shape[0] >= 30000:
+                            shared_indices = np.random.choice(data.shape[0], 30000, replace=False)
+                        else:
+                            shared_indices = np.arange(data.shape[0])  # Use all indices if fewer than 30,000
+
+                    # Use the shared indices for sampling
+                    sampled_data = data[shared_indices]
 
                     # Overwrite the existing .npy file with the sampled data
                     np.save(file_path, sampled_data)
                     print(f"Overwritten {file_name} with {sampled_data.shape[0]} points.")
 
 # Usage
-process_npy_files('./data/s3dis')
+process_npy_files('./data/s3dis_filtered')
