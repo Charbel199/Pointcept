@@ -16,7 +16,6 @@ from pointcept.models.dbbd.Propagator import ConcatPropagation
 from pointcept.models.builder import MODELS, build_model
 from pointcept.models.utils import offset2batch
 
-
 def inference(encoder, points_tensor, transformed_points=None):
     # Encode the points using the dynamic encoder
     device = points_tensor.device
@@ -32,7 +31,7 @@ def inference(encoder, points_tensor, transformed_points=None):
     #                "offset": offset_arr}
 
     #point_dict issue for sparseconv (New encoder)
-    points_dict = {"feat": transformed_points["feat"],"coord": resized_points_tensor[:, :3], "grid_coord": transformed_points['grid_coord'], "grid_size": 0.01,
+    points_dict = {"feat": transformed_points["feat"],"coord": resized_points_tensor[:, :3], "grid_coord": transformed_points['grid_coord'], 
                    "offset": offset_arr}
     # point_features = encoder(points_dict)["feat"]
     point_features = encoder(points_dict) # (N,number of classes)
@@ -377,6 +376,7 @@ class DBBD(nn.Module):
         transformed_points_X1_dict = {i: pts for i, pts in enumerate(view1_xyzrgb_split)}
         transformed_points_X2_dict = {i: pts for i, pts in enumerate(view2_xyzrgb_split)}
         batch_hierarchical_regions = data_dict['regions']
+
 
         view1_data_dict = dict(
             origin_coord=view1_origin_coord,

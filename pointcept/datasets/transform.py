@@ -863,7 +863,10 @@ class GridSample(object):
                 np.cumsum(np.insert(count, 0, 0)[0:-1])
                 + np.random.randint(0, count.max(), count.size) % count
             )
-            idx_unique = idx_sort[idx_select]
+            #idx_unique = idx_sort[idx_select]
+            #TODO: Why have them unique?
+            idx_unique = np.arange(scaled_coord.shape[0])
+
             if "sampled_index" in data_dict:
                 # for ScanNet data efficient, we need to make sure labeled point is sampled.
                 idx_unique = np.unique(
