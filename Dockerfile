@@ -31,3 +31,7 @@ RUN TORCH_CUDA_ARCH_LIST="5.2 6.0 6.1 7.0+PTX 8.0" pip install Pointcept/libs/po
 
 # Build swin3d
 RUN TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX 8.0" pip install -U git+https://github.com/microsoft/Swin3D.git -v
+
+# Added to remove error for train (AssertionError: Trainer: DBBD: PointTransformerV3: Make sure flash_attn is installed.)
+RUN pip install flash-attn
+RUN pip install debugpy

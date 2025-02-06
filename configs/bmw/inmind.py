@@ -4,7 +4,7 @@ mx_lvl = 2
 num_samples_per_level=2
 point_max=20000
 dataset_type = "S3DISDataset"
-data_root = "data/s3dis-new"
+data_root = "data/s3dis"
 min_num_points_list = [5000,50]
 
 # misc custom setting
