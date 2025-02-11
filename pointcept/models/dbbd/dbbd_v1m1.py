@@ -40,10 +40,17 @@ def inference(encoder, points_tensor, view_data_dict=None):
     #point_dict issue for sparseconv (New encoder)
     points_dict = {"feat": view_data_dict["feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
                    "offset": offset_arr}
+    
+    # NOTE Masked variables added NOTE #
+    points_masked_dict = {"feat": view_data_dict["masked_feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
+                   "offset": offset_arr}
+    
     # point_features = encoder(points_dict)["feat"]
     
     # shape: [20000, 96] [B*N, output_dim]
     point_features = encoder(points_dict) # (B*N, output_dim)
+    
+    point_masked_features = encoder(points_masked_dict) # NOTE Masked variables added NOTE #
     
     # point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
 
@@ -56,9 +63,13 @@ def inference(encoder, points_tensor, view_data_dict=None):
     batch_count = batch.bincount()
     point_features_split = point_features.split(list(batch_count))
     point_features_split = torch.stack(point_features_split)
-
+    
+    # NOTE Masked variables added NOTE #
+    point_masked_features_split = point_masked_features.split(list(batch_count))
+    point_masked_features_split = torch.stack(point_masked_features_split)
+    
     # shape: [4, 5000, 96] [B, N, output_dim]
-    return point_features_split
+    return point_features_split, point_masked_features_split
 
 
 def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
@@ -106,13 +117,13 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     # else:
     #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
+    # NOTE Masked variables added NOTE #
     # shape: [4, 5000, 96] [B, N, output_dim]
-    batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+    batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
 
     # Aggregate
     # shape: [4, 96] [B, output_dim]
     batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
-
 
     # Iterate through list of regions and set as the corresponding superpoints for the level
     parent_feature_list = []
@@ -123,6 +134,8 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         # }
         reg['super_point_branch1'] = batched_region_feature[i] # (output_dim,)
         reg['super_point1'] = batched_point_features[i] # (N, output_dim)
+        # NOTE Masked variables added NOTE #
+        reg['super_point_masked1'] = batched_point_masked_features[i] # (N, output_dim)
         reg['level_branch1'] = level 
 
         # Duplicate in parent_feature array based on number of upcoming subregions
@@ -174,14 +187,18 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         # else:
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
-        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
 
         # Aggregate
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
+        # NOTE and TODO: Why are we not also adding super_point2 here ?
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
-            reg['level_branch2'] = level 
+            reg['level_branch2'] = level
+            
+            reg['super_point2'] = batched_point_features[i] # NOTE: Added by Angelo for testing
+            reg['super_point_masked2'] = batched_point_masked_features[i] # NOTE: Added by Angelo for testing
             
     else:
         # IF LAST LEVEL
@@ -217,16 +234,16 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [4, 5000, 96] [B, N, output_dim]
-        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
         
         # Aggregate
         # shape: [4, 96] [B, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
-
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['super_point2'] = batched_point_features[i] # (N,output_dim)
+            reg['super_point_masked2'] = batched_point_masked_features[i] # (N,output_dim)
             reg['level_branch2'] = level 
 
     return region
@@ -277,6 +294,32 @@ def collect_region_features_per_points(region: Dict[str, Any],
     # Recursively collect from sub-regions
     for sub_region in region['sub_regions']:
         collect_region_features_per_points(sub_region, features_dict_branch1, features_dict_branch2)
+
+# NOTE Masked variables added NOTE #  
+def collect_region_masked_features_per_points(region: Dict[str, Any],
+                                      masked_features_dict_branch1: Dict[int, List[torch.Tensor]],
+                                      masked_features_dict_branch2: Dict[int, List[torch.Tensor]]) -> None:
+    # Collect features from Branch 1
+    if 'super_point_masked1' in region:
+        # level1 (here 0 since mx_lvl=0) is the current branch1 level with respect to total max levels
+        level1 = region['level_branch1']
+        if level1 not in masked_features_dict_branch1:
+            masked_features_dict_branch1[level1] = []
+        # total desired shape: [1 x [5000, 96]] [mx_lvl x [N, output_dim]]
+        masked_features_dict_branch1[level1].append(region['super_point_masked1'])
+
+    # Collect features from Branch 2
+    if 'super_point_masked2' in region:
+        # level2 (here 0 since mx_lvl=0) is the current branch2 level with respect to total max levels
+        level2 = region['level_branch2']
+        if level2 not in masked_features_dict_branch2:
+            masked_features_dict_branch2[level2] = []
+        # total desired shape: [1 x [5000, 96]] [mx_lvl x [N, output_dim]]
+        masked_features_dict_branch2[level2].append(region['super_point_masked2'])
+
+    # Recursively collect from sub-regions
+    for sub_region in region['sub_regions']:
+        collect_region_masked_features_per_points(sub_region, masked_features_dict_branch1, masked_features_dict_branch2)
 
 def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[torch.Tensor]],
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
@@ -553,7 +596,7 @@ class DBBD(nn.Module):
         self, view1_feat, view1_offset, view2_feat, view2_offset, match_index
     ):
         assert view1_offset.shape == view2_offset.shape
-
+        
         view1_feat = view1_feat[match_index[:, 0]]
         view2_feat = view2_feat[match_index[:, 1]]
         view1_feat = view1_feat / (
@@ -580,7 +623,7 @@ class DBBD(nn.Module):
             neg_sim / get_world_size(),
         )
 
-    def forward(self, data_dict): # NOTE is data_dict["view1_feat"] being manipulated at any point in our approach ? NOTE #
+    def forward(self, data_dict):
         total_loss = 0.0
 
         # shape:[10000, 3]
@@ -606,6 +649,23 @@ class DBBD(nn.Module):
         view2_coord = data_dict["view2_coord"]
         view2_feat = data_dict["view2_feat"]
         view2_offset = data_dict["view2_offset"].int()
+        
+        # NOTE Masked Variables added NOTE #
+        view1_masked_feat = data_dict.get("view1_masked_feat", data_dict["view1_feat"])
+        view2_masked_feat = data_dict.get("view2_masked_feat", data_dict["view2_feat"])
+
+        # NOTE Masked Functions added NOTE #
+        view1_point_mask, view2_point_mask = self.generate_cross_masks(
+            view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
+        )
+
+        view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
+        view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
+        view1_masked_feat = view1_masked_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
+
+        view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
+        view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
+        view2_masked_feat = view2_masked_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
 
         # # union origin coord
         # shape:[10000]
@@ -640,14 +700,17 @@ class DBBD(nn.Module):
             origin_coord=view1_origin_coord,
             coord=transformed_points_X1_dict,
             feat=view1_feat,
+            masked_feat=view1_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view1_offset,
         )
         view2_data_dict = dict(
             origin_coord=view2_origin_coord,
             coord=transformed_points_X2_dict,
             feat=view2_feat,
+            masked_feat=view2_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view2_offset,
         )
+        
         # view1_data_dict = dict(
         #     origin_coord=view1_origin_coord,
         #     coord=view1_coord,
@@ -670,9 +733,16 @@ class DBBD(nn.Module):
         # view1_feat = self.point_encoder(view1_data_dict)
         # view2_feat = self.point_encoder(view2_data_dict)
 
-        
-
-        
+        # # NOTE Masked Functions added NOTE # TODO: CAN WE MIX HERE OR SHOULD WE MIX IN THE FUNCTIONS OR DO WE NOT MIX AT ALL ?
+        # # view mixing strategy
+        # if random.random() < self.view1_mix_prob:
+        #     view1_data_dict["offset"] = torch.cat(
+        #         [view1_offset[1:-1:2], view1_offset[-1].unsqueeze(0)], dim=0
+        #     )
+        # if random.random() < self.view2_mix_prob:
+        #     view2_data_dict["offset"] = torch.cat(
+        #         [view2_offset[1:-1:2], view2_offset[-1].unsqueeze(0)], dim=0
+        #     )
         
         # # Encode and process with shared encoder using the same regions
         # # encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
@@ -680,9 +750,6 @@ class DBBD(nn.Module):
                              self.propagation_method, view_data_dict=view1_data_dict, output_dim=self.output_dim)
         encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, 
                              view_data_dict=view2_data_dict, max_levels=self.max_levels, output_dim=self.output_dim)
-
-        # TODO: masking
-        # NOTE: remove get world size after getting loss
 
         # Compute loss for this sample
         #LOSS per level
@@ -719,60 +786,61 @@ class DBBD(nn.Module):
                 combine_features(all_features_points_dict_branch2, features_dict_points_branch2)
             loss = compute_contrastive_loss_per_points(all_features_points_dict_branch1, all_features_points_dict_branch2)
         elif self.loss_method in ["masked"]:
-            view1_origin_coord = data_dict["view1_origin_coord"]
-            view1_coord = data_dict["view1_coord"]
-            view1_feat = data_dict["view1_feat"]
-            view1_offset = data_dict["view1_offset"].int()
+            # view1_origin_coord = data_dict["view1_origin_coord"]
+            # view1_coord = data_dict["view1_coord"]
+            # view1_feat = data_dict["view1_feat"]
+            # view1_offset = data_dict["view1_offset"].int()
 
-            view2_origin_coord = data_dict["view2_origin_coord"]
-            view2_coord = data_dict["view2_coord"]
-            view2_feat = data_dict["view2_feat"]
-            view2_offset = data_dict["view2_offset"].int()
+            # view2_origin_coord = data_dict["view2_origin_coord"]
+            # view2_coord = data_dict["view2_coord"]
+            # view2_feat = data_dict["view2_feat"]
+            # view2_offset = data_dict["view2_offset"].int()
 
-            # mask generation by union original coord (without spatial augmentation)
-            view1_point_mask, view2_point_mask = self.generate_cross_masks(
-                view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
-            )
+            # # mask generation by union original coord (without spatial augmentation)
+            # view1_point_mask, view2_point_mask = self.generate_cross_masks(
+            #     view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
+            # )
 
-            view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
-            view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
-            view1_feat = view1_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
+            # view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
+            # view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
+            # view1_feat = view1_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
 
-            view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
-            view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
-            view2_feat = view2_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
+            # view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
+            # view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
+            # view2_feat = view2_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
 
-            view1_data_dict = dict(
-                origin_coord=view1_origin_coord,
-                coord=view1_coord,
-                feat=view1_feat,
-                offset=view1_offset,
-            )
-            view2_data_dict = dict(
-                origin_coord=view2_origin_coord,
-                coord=view2_coord,
-                feat=view2_feat,
-                offset=view2_offset,
-            )
+            # view1_data_dict = dict(
+            #     origin_coord=view1_origin_coord,
+            #     coord=view1_coord,
+            #     feat=view1_feat,
+            #     offset=view1_offset,
+            # )
+            # view2_data_dict = dict(
+            #     origin_coord=view2_origin_coord,
+            #     coord=view2_coord,
+            #     feat=view2_feat,
+            #     offset=view2_offset,
+            # )
 
-            # SparseConv based method need grid coord
-            if "view1_grid_coord" in data_dict.keys():
-                view1_data_dict["grid_coord"] = data_dict["view1_grid_coord"]
-            if "view2_grid_coord" in data_dict.keys():
-                view2_data_dict["grid_coord"] = data_dict["view2_grid_coord"]
+            # # SparseConv based method need grid coord
+            # if "view1_grid_coord" in data_dict.keys():
+            #     view1_data_dict["grid_coord"] = data_dict["view1_grid_coord"]
+            # if "view2_grid_coord" in data_dict.keys():
+            #     view2_data_dict["grid_coord"] = data_dict["view2_grid_coord"]
 
-            # view mixing strategy
-            if random.random() < self.view1_mix_prob:
-                view1_data_dict["offset"] = torch.cat(
-                    [view1_offset[1:-1:2], view1_offset[-1].unsqueeze(0)], dim=0
-                )
-            if random.random() < self.view2_mix_prob:
-                view2_data_dict["offset"] = torch.cat(
-                    [view2_offset[1:-1:2], view2_offset[-1].unsqueeze(0)], dim=0
-                )
+            # # view mixing strategy
+            # if random.random() < self.view1_mix_prob:
+            #     view1_data_dict["offset"] = torch.cat(
+            #         [view1_offset[1:-1:2], view1_offset[-1].unsqueeze(0)], dim=0
+            #     )
+            # if random.random() < self.view2_mix_prob:
+            #     view2_data_dict["offset"] = torch.cat(
+            #         [view2_offset[1:-1:2], view2_offset[-1].unsqueeze(0)], dim=0
+            #     )
 
-            view1_feat = self.point_encoder(view1_data_dict)
-            view2_feat = self.point_encoder(view2_data_dict)
+            # view1_feat = self.point_encoder(view1_data_dict)
+            # view2_feat = self.point_encoder(view2_data_dict)
+            
             match_index = self.match_contrastive_pair(
                 view1_origin_coord,
                 view1_offset,
@@ -781,46 +849,64 @@ class DBBD(nn.Module):
                 max_k=self.matching_max_k,
                 max_radius=self.matching_max_radius,
             )
+            
+            # Initialize dictionaries for accumulating features across batches
+            all_masked_features_points_dict_branch1 = {}
+            all_masked_features_points_dict_branch2 = {}
+            for i in range(len(view1_offset)):
+                hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
+                # Collect features
+                masked_features_dict_points_branch1 = {}
+                masked_features_dict_points_branch2 = {}
+                collect_region_masked_features_per_points(hierarchical_regions, masked_features_dict_points_branch1, masked_features_dict_points_branch2)
+
+                # Combine features across batches
+                # all_features_points_dict_branch1 shape: [1, [4, 5000, 96]] [mx_lvl, [B, N, output_dim]]
+                combine_features(all_masked_features_points_dict_branch1, masked_features_dict_points_branch1)
+                combine_features(all_masked_features_points_dict_branch2, masked_features_dict_points_branch2)
+            
+            all_masked_features_points_dict_branch1 = torch.cat(all_masked_features_points_dict_branch1[0], dim=0)
+            all_masked_features_points_dict_branch2 = torch.cat(all_masked_features_points_dict_branch2[0], dim=0)
             nce_loss, pos_sim, neg_sim = self.compute_contrastive_loss(
-                view1_feat, view1_offset, view2_feat, view2_offset, match_index
+                all_masked_features_points_dict_branch1, view1_offset, all_masked_features_points_dict_branch2, view2_offset, match_index
             )
             loss = nce_loss * self.contrast_weight
             result_dict = dict(nce_loss=nce_loss, pos_sim=pos_sim, neg_sim=neg_sim)
 
-            if self.color_head is not None:
-                assert "view1_color" in data_dict.keys()
-                assert "view2_color" in data_dict.keys()
-                view1_color = data_dict["view1_color"]
-                view2_color = data_dict["view2_color"]
-                view1_color_pred = self.color_head(view1_feat[view1_point_mask])
-                view2_color_pred = self.color_head(view2_feat[view2_point_mask])
-                color_loss = (
-                    torch.sum((view1_color_pred - view1_color[view1_point_mask]) ** 2)
-                    + torch.sum((view2_color_pred - view2_color[view2_point_mask]) ** 2)
-                ) / (view1_color_pred.shape[0] + view2_color_pred.shape[0])
-                loss = loss + color_loss * self.reconstruct_weight
-                result_dict["color_loss"] = color_loss
+            # if self.color_head is not None:
+            #     assert "view1_color" in data_dict.keys()
+            #     assert "view2_color" in data_dict.keys()
+            #     view1_color = data_dict["view1_color"]
+            #     view2_color = data_dict["view2_color"]
+            #     view1_color_pred = self.color_head(view1_feat[view1_point_mask])
+            #     view2_color_pred = self.color_head(view2_feat[view2_point_mask])
+            #     color_loss = (
+            #         torch.sum((view1_color_pred - view1_color[view1_point_mask]) ** 2)
+            #         + torch.sum((view2_color_pred - view2_color[view2_point_mask]) ** 2)
+            #     ) / (view1_color_pred.shape[0] + view2_color_pred.shape[0])
+            #     loss = loss + color_loss * self.reconstruct_weight
+            #     result_dict["color_loss"] = color_loss
 
-            if self.normal_head is not None:
-                assert "view1_normal" in data_dict.keys()
-                assert "view2_normal" in data_dict.keys()
-                view1_normal = data_dict["view1_normal"]
-                view2_normal = data_dict["view2_normal"]
-                view1_normal_pred = self.normal_head(view1_feat[view1_point_mask])
-                view2_normal_pred = self.normal_head(view2_feat[view2_point_mask])
+            # if self.normal_head is not None:
+            #     assert "view1_normal" in data_dict.keys()
+            #     assert "view2_normal" in data_dict.keys()
+            #     view1_normal = data_dict["view1_normal"]
+            #     view2_normal = data_dict["view2_normal"]
+            #     view1_normal_pred = self.normal_head(view1_feat[view1_point_mask])
+            #     view2_normal_pred = self.normal_head(view2_feat[view2_point_mask])
 
-                view1_normal_pred = view1_normal_pred / (
-                    torch.norm(view1_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
-                )
-                view2_normal_pred = view2_normal_pred / (
-                    torch.norm(view2_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
-                )
-                normal_loss = (
-                    torch.sum(view1_normal_pred * view1_normal[view1_point_mask])
-                    + torch.sum(view2_normal_pred * view2_normal[view2_point_mask])
-                ) / (view1_normal_pred.shape[0] + view2_normal_pred.shape[0])
-                loss = loss + normal_loss * self.reconstruct_weight
-                result_dict["normal_loss"] = normal_loss
+            #     view1_normal_pred = view1_normal_pred / (
+            #         torch.norm(view1_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
+            #     )
+            #     view2_normal_pred = view2_normal_pred / (
+            #         torch.norm(view2_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
+            #     )
+            #     normal_loss = (
+            #         torch.sum(view1_normal_pred * view1_normal[view1_point_mask])
+            #         + torch.sum(view2_normal_pred * view2_normal[view2_point_mask])
+            #     ) / (view1_normal_pred.shape[0] + view2_normal_pred.shape[0])
+            #     loss = loss + normal_loss * self.reconstruct_weight
+            #     result_dict["normal_loss"] = normal_loss
 
             result_dict["loss"] = loss    
         
