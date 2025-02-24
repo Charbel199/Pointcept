@@ -28,13 +28,20 @@ class ConcatPropagation(FeaturePropagationBase):
     def propagate(self, parent_feature: torch.Tensor, current_feature: torch.Tensor) -> torch.Tensor:
         if parent_feature is not None:
             # Concatenate along the feature dimension
-
+            # parent_feature: shape = [96] [output_dim]
+            # current_feature: shape = [5000, 3] [min_num_points_per_pointcloud, D]
             # CUSTOM LOGIC
-            repeated_vector = parent_feature.unsqueeze(0).repeat(current_feature.size(0), 1)  # (levelN, C)
-            # Concatenate along the second dimension
-            combined_feature = torch.cat((current_feature, repeated_vector), dim=1)  # (levelN, C+D)
+            # shape: [500, 96] [min_num_points_per_pointcloud, output_dim]
+            repeated_vector = parent_feature.unsqueeze(0).repeat(current_feature.size(0), 1)
+            original_dim = 3  # Original feature size (before padding)
+            #shape: [500, 3]
+            current_feature = current_feature[:, :original_dim]  # Slice only the original features
 
-            combined_feature = self.linear(combined_feature)  # Shape: [levelN, feature_dim]
+            # Concatenate along the second dimension
+            # shape: [500, 99] [min_num_points_per_pointcloud, (output_dim + D)]
+            combined_feature = torch.cat((current_feature, repeated_vector), dim=1)
+            # shape: [500, 96] [min_num_points_per_pointcloud, D]
+            combined_feature = self.linear(combined_feature)
             combined_feature = self.activation(combined_feature)
 
 
@@ -44,6 +51,7 @@ class ConcatPropagation(FeaturePropagationBase):
             # combined_feature = self.linear(combined_feature.unsqueeze(0))  # Shape: [1, feature_dim]
             # combined_feature = self.activation(combined_feature)
             # combined_feature = combined_feature.squeeze(0)  # Shape: [feature_dim]
+
         else:
             combined_feature = current_feature
         return combined_feature

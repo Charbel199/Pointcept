@@ -78,12 +78,12 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
         hierarchical_regions = []
         for center, region_indices in zip(sampled_centers, regions_pts_indices):
 
-            if len(region_indices)<min_num_points_per_pointcloud:
+            if len(region_indices) < min_num_points_per_pointcloud:
                 continue
             region_indices = np.random.choice(region_indices, size=min_num_points_per_pointcloud, replace=False)
             region_points = points[region_indices]  # (N_region, D)
             region_colors = colors[region_indices]
-            _, sub_regions = recursive_fps(region_points,points_rgb, level + 1,min_num_points_list=min_num_points_list)
+            _, sub_regions = recursive_fps(region_points, points_rgb, level + 1, min_num_points_list=min_num_points_list)
             hierarchical_regions.append({
                 'center': center,
                 'points': region_points,
@@ -95,7 +95,7 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
 
         return sampled_centers, hierarchical_regions
 
-    _, hierarchical_regions = recursive_fps(points,points_rgb, 0,min_num_points_list=min_num_points_list)
+    _, hierarchical_regions = recursive_fps(points, points_rgb, 0, min_num_points_list=min_num_points_list)
     return {
         'points': points,
         'points': points_rgb,

@@ -242,11 +242,20 @@ class SpUNetBase(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward(self, input_dict):
-        grid_coord = input_dict["grid_coord"]
-        feat = input_dict["feat"]
+        # NOTE ADDED BY ANGELO FOR TESTING NOTE #
         offset = input_dict["offset"]
-
         batch = offset2batch(offset)
+        
+        number_of_points_for_testing = batch.shape[0]
+        
+        grid_coord = input_dict["grid_coord"]
+        grid_coord = grid_coord[:number_of_points_for_testing, :] # FIX THIS
+        
+        feat = input_dict["feat"]
+        feat = feat[:number_of_points_for_testing, :] # FIX THIS
+        
+        # TODO FIX grid_coord and feat to only have the current level values TODO #
+
         sparse_shape = torch.add(torch.max(grid_coord, dim=0).values, 96).tolist()
         x = spconv.SparseConvTensor(
             features=feat,

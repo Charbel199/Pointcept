@@ -38,7 +38,7 @@ def inference(encoder, points_tensor, view_data_dict=None):
     #                "offset": offset_arr}
 
     #point_dict issue for sparseconv (New encoder)
-    points_dict = {"feat": view_data_dict["feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
+    points_dict = {"feat": view_data_dict["feat"], "coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
                    "offset": offset_arr}
     
     # NOTE Masked variables added NOTE #
@@ -98,15 +98,18 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         else:
             # shape: [5000, 3] [N, D]
             points_tensor = corresponding_transformed_points[indices] # (levelN, D)
+            # shape: [5000, 96] [N, output_dim]
+            points_tensor = F.pad(points_tensor, (0, 99 - 2*points_tensor.shape[1]))
 
             # Propagate if there's a parent (Get the parent superpoints from the hierarchy for each region in the list)
-            if parent_feature is not None:
+            if parent_feature is not None: # parent_feature: shape = [8, 96] [2xB, output_dim]
+                # shape: [500, 96] [levelN, output_dim]
                 points_tensor = propagation_method.propagate(parent_feature[i], points_tensor) # (levelN, output_dim)
             
-            # shape: [4 x [5000, 3]] [B x [N, D]]
+            # shape: [4 x [5000, 96]] [B x [N, output_dim]]
             points_tensor_list.append(points_tensor)
 
-    # shape: [4, 5000, 3] [B, N, D]
+    # shape: [4, 5000, 96] [B, N, output_dim]
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
     # Encode
@@ -177,7 +180,9 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                     super_points_from_previous_level.append(sub_region['super_point_branch2'])
         
 
+        # shape: [8, 96] [B * num_sample_lvl, output_dim]
         batched_tensor = torch.stack(super_points_from_previous_level) # (levelB, C)
+        # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
         # if batched_tensor.shape[2] == 6:
@@ -186,10 +191,12 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     padding_size = (0, 6)
         # else:
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
-    
+
+        # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
         batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
 
         # Aggregate
+        # shape [8, 96] [B * num_sample_lvl, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
         # NOTE and TODO: Why are we not also adding super_point2 here ?
@@ -217,11 +224,13 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             else:
                 # shape: [5000, 3] [N, D]
                 points_tensor = corresponding_transformed_points[indices] # (levelN, D)
+                # shape: [5000, 96] [N, output_dim]
+                points_tensor = F.pad(points_tensor, (0, 99 - 2*points_tensor.shape[1]))
                 
-                # shape: [4 x [5000, 3]] [B x [N, D]]
+                # shape: [4 x [500, 96]] [B x [N, output_dim]]
                 points_tensor_list.append(points_tensor)
 
-        # shape: [4, 5000, 3] [B, N, D]
+        # shape: [4, 500, 96] [B, N, output_dim]
         batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
 
@@ -233,7 +242,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         # else:
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
-        # shape: [4, 5000, 96] [B, N, output_dim]
+        # shape: [4, 500, 96] [B, N, output_dim]
         batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
         
         # Aggregate
@@ -242,8 +251,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
 
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
-            reg['super_point2'] = batched_point_features[i] # (N,output_dim)
-            reg['super_point_masked2'] = batched_point_masked_features[i] # (N,output_dim)
+            reg['super_point2'] = batched_point_features[i] # (N, output_dim)
+            reg['super_point_masked2'] = batched_point_masked_features[i] # (N, output_dim)
             reg['level_branch2'] = level 
 
     return region
@@ -289,7 +298,7 @@ def collect_region_features_per_points(region: Dict[str, Any],
         if level2 not in features_dict_branch2:
             features_dict_branch2[level2] = []
         # total desired shape: [1 x [5000, 96]] [mx_lvl x [N, output_dim]]
-        features_dict_branch2[level2].append(region['super_point2']) # region['super_point2']: shape: [5000, 96] [N, output_dim]
+        features_dict_branch2[level2].append(region['super_point2']) # NOTE region['super_point2']: shape: [1, 96] BUT WE WANT [N, output_dim]
 
     # Recursively collect from sub-regions
     for sub_region in region['sub_regions']:
@@ -456,7 +465,9 @@ class DBBD(nn.Module):
         self.point_encoder = build_model(backbone)
         self.aggregator = MaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
-        self.propagation_method.update_feature_dim(input_dim=backbone["in_channels"], feature_dim=128)
+        # self.propagation_method.update_feature_dim(input_dim=backbone["in_channels"], feature_dim=128)
+        # NOTE Changed by Angelo for Testing NOTE #
+        self.propagation_method.update_feature_dim(input_dim=99, feature_dim=96)
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
@@ -760,8 +771,8 @@ class DBBD(nn.Module):
             for i in range(len(view1_offset)):
                 hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
                 # Collect features
-                features_dict_branch1 = {}
-                features_dict_branch2 = {}
+                features_dict_branch1 = {} # shape: [96]
+                features_dict_branch2 = {} # shape: [96]
                 collect_region_features_per_level(hierarchical_regions, features_dict_branch1, features_dict_branch2)
 
                 # Combine features across batches
@@ -776,8 +787,8 @@ class DBBD(nn.Module):
             for i in range(len(view1_offset)):
                 hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
                 # Collect features
-                features_dict_points_branch1 = {}
-                features_dict_points_branch2 = {}
+                features_dict_points_branch1 = {} # shape: [5000, 96]
+                features_dict_points_branch2 = {} # shape: [1, 96] NOTE should be [5000, 96]
                 collect_region_features_per_points(hierarchical_regions,features_dict_points_branch1,features_dict_points_branch2)
 
                 # Combine features across batches
@@ -856,12 +867,12 @@ class DBBD(nn.Module):
             for i in range(len(view1_offset)):
                 hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
                 # Collect features
-                masked_features_dict_points_branch1 = {}
-                masked_features_dict_points_branch2 = {}
+                masked_features_dict_points_branch1 = {} # shape: [5000, 96]
+                masked_features_dict_points_branch2 = {} # shape: [1, 96] NOTE should be [5000, 96]
                 collect_region_masked_features_per_points(hierarchical_regions, masked_features_dict_points_branch1, masked_features_dict_points_branch2)
 
                 # Combine features across batches
-                # all_features_points_dict_branch1 shape: [1, [4, 5000, 96]] [mx_lvl, [B, N, output_dim]]
+                # all_masked_features_points_dict_branch1 shape: [1, [4, 5000, 96]] [mx_lvl, [B, N, output_dim]]
                 combine_features(all_masked_features_points_dict_branch1, masked_features_dict_points_branch1)
                 combine_features(all_masked_features_points_dict_branch2, masked_features_dict_points_branch2)
             

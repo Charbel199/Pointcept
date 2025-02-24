@@ -1,15 +1,15 @@
 _base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
-batch_size = 32  # bs: total bs in all gpus
+batch_size = 4  # bs: total bs in all gpus
 mix_prob = 0
 empty_cache = False
 enable_amp = False
 num_worker=1
 evaluate = False
-mx_lvl = 0
+mx_lvl = 1
 num_samples_per_level=2
 point_max=5000
-min_num_points_list = [0]
+min_num_points_list = [500, 50]
 # model settings
 model = dict(
     type="DBBD-v1m1",
@@ -22,7 +22,7 @@ model = dict(
     ),
     output_dim=13,
     device = "cuda",
-    loss_method = "masked",
+    loss_method = "level",
     num_samples_per_level=num_samples_per_level,
     max_levels=mx_lvl,
     
@@ -113,7 +113,7 @@ data = dict(
                     dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
+            dict(type="DBDD", num_samples_per_level=num_samples_per_level, max_levels=mx_lvl, min_num_points_list=min_num_points_list),
 
             dict(type="ToTensor"),
             dict(
