@@ -41,16 +41,20 @@ def inference(encoder, points_tensor, view_data_dict=None):
     points_dict = {"feat": view_data_dict["feat"], "coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
                    "offset": offset_arr}
     
-    # NOTE Masked variables added NOTE #
-    points_masked_dict = {"feat": view_data_dict["masked_feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
-                   "offset": offset_arr}
+    # # NOTE Masked variables added NOTE #
+    # points_masked_dict = {"feat": view_data_dict["masked_feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
+                #    "offset": offset_arr}
     
     # point_features = encoder(points_dict)["feat"]
     
     # shape: [20000, 96] [B*N, output_dim]
     point_features = encoder(points_dict) # (B*N, output_dim)
     
-    point_masked_features = encoder(points_masked_dict) # NOTE Masked variables added NOTE #
+    # if torch.isnan(view_data_dict["masked_feat"]).any():
+    #     print("NaN detected in `masked_feat` before encoding!")
+    #     exit()
+    
+    # point_masked_features = encoder(points_masked_dict) # NOTE Masked variables added NOTE #
     
     # point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
 
@@ -64,12 +68,12 @@ def inference(encoder, points_tensor, view_data_dict=None):
     point_features_split = point_features.split(list(batch_count))
     point_features_split = torch.stack(point_features_split)
     
-    # NOTE Masked variables added NOTE #
-    point_masked_features_split = point_masked_features.split(list(batch_count))
-    point_masked_features_split = torch.stack(point_masked_features_split)
+    # # NOTE Masked variables added NOTE #
+    # point_masked_features_split = point_masked_features.split(list(batch_count))
+    # point_masked_features_split = torch.stack(point_masked_features_split)
     
     # shape: [4, 5000, 96] [B, N, output_dim]
-    return point_features_split, point_masked_features_split
+    return point_features_split
 
 
 def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
@@ -122,7 +126,10 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # NOTE Masked variables added NOTE #
     # shape: [4, 5000, 96] [B, N, output_dim]
-    batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
+    batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+    # if torch.isnan(batched_point_masked_features).any():
+    #     print("NaN detected in `batched_point_masked_features` before aggregation")
+    #     exit()
 
     # Aggregate
     # shape: [4, 96] [B, output_dim]
@@ -138,7 +145,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         reg['super_point_branch1'] = batched_region_feature[i] # (output_dim,)
         reg['super_point1'] = batched_point_features[i] # (N, output_dim)
         # NOTE Masked variables added NOTE #
-        reg['super_point_masked1'] = batched_point_masked_features[i] # (N, output_dim)
+        # reg['super_point_masked1'] = batched_point_masked_features[i] # (N, output_dim)
         reg['level_branch1'] = level 
 
         # Duplicate in parent_feature array based on number of upcoming subregions
@@ -193,7 +200,10 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
-        batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+        # if torch.isnan(batched_point_masked_features).any():
+        #     print("NaN detected in `batched_point_masked_features` before aggregation")
+        #     exit()
 
         # Aggregate
         # shape [8, 96] [B * num_sample_lvl, output_dim]
@@ -205,7 +215,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             reg['level_branch2'] = level
             
             reg['super_point2'] = batched_point_features[i] # NOTE: Added by Angelo for testing
-            reg['super_point_masked2'] = batched_point_masked_features[i] # NOTE: Added by Angelo for testing
+            # reg['super_point_masked2'] = batched_point_masked_features[i] # NOTE: Added by Angelo for testing
             
     else:
         # IF LAST LEVEL
@@ -243,8 +253,13 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [4, 500, 96] [B, N, output_dim]
-        batched_point_features, batched_point_masked_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
         
+        # NOTE NAN ARE BEING DETECTED
+        # TODO FIX THE ROOT CAUSE
+        # if torch.isnan(batched_point_masked_features).any():
+        #     print("NaN detected in `batched_point_masked_features` before aggregation")
+        #     exit()
         # Aggregate
         # shape: [4, 96] [B, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
@@ -252,7 +267,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['super_point2'] = batched_point_features[i] # (N, output_dim)
-            reg['super_point_masked2'] = batched_point_masked_features[i] # (N, output_dim)
+            # reg['super_point_masked2'] = batched_point_masked_features[i] # (N, output_dim)
             reg['level_branch2'] = level 
 
     return region
@@ -416,6 +431,36 @@ def compute_contrastive_loss_per_points(features_dict_branch1: Dict[int, List[to
         total_loss += loss
 
     return total_loss
+
+def compute_contrastive_loss_all_points(view1_point_feat: torch.Tensor,
+                                        view2_point_feat: torch.Tensor,
+                                        temperature: float = 0.07, device="cuda") -> torch.Tensor:
+    if view1_point_feat.shape != view2_point_feat.shape:
+        print(f"Mismatch of point features: {view1_point_feat.shape} vs {view2_point_feat.shape}")
+        return None
+    
+    # Move to device
+    view1_point_feat = view1_point_feat.to(device)
+    view2_point_feat = view2_point_feat.to(device)
+
+    # Normalize features along feature dimension (dim=1) because shape = [B*N, output_dim]
+    features_branch1 = F.normalize(view1_point_feat, dim=1)
+    features_branch2 = F.normalize(view2_point_feat, dim=1)
+
+    # Compute similarity scores (cosine similarity)
+    logits = torch.matmul(features_branch1, features_branch2.T) / temperature  # Shape: [B*N, B*N]
+
+    # Generate labels: Positive pairs are along the diagonal
+    num_points = logits.shape[0]  # B*N
+    labels = torch.arange(num_points, device=device)
+
+    # Define loss function
+    criterion = nn.CrossEntropyLoss()
+
+    # Compute contrastive loss
+    loss = criterion(logits, labels)
+
+    return loss  # Returns a scalar tensor (final loss)
 
 def combine_features(all_features_dict_branch: Dict, features_dict_branch: Dict):
     """
@@ -661,22 +706,22 @@ class DBBD(nn.Module):
         view2_feat = data_dict["view2_feat"]
         view2_offset = data_dict["view2_offset"].int()
         
-        # NOTE Masked Variables added NOTE #
-        view1_masked_feat = data_dict.get("view1_masked_feat", data_dict["view1_feat"])
-        view2_masked_feat = data_dict.get("view2_masked_feat", data_dict["view2_feat"])
+        # # NOTE Masked Variables added NOTE #
+        # view1_masked_feat = data_dict.get("view1_masked_feat", data_dict["view1_feat"])
+        # view2_masked_feat = data_dict.get("view2_masked_feat", data_dict["view2_feat"])
 
-        # NOTE Masked Functions added NOTE #
-        view1_point_mask, view2_point_mask = self.generate_cross_masks(
-            view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
-        )
+        # # NOTE Masked Functions added NOTE #
+        # view1_point_mask, view2_point_mask = self.generate_cross_masks(
+        #     view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
+        # )
 
-        view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
-        view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
-        view1_masked_feat = view1_masked_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
+        # view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
+        # view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
+        # view1_masked_feat = view1_masked_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
 
-        view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
-        view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
-        view2_masked_feat = view2_masked_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
+        # view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
+        # view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
+        # view2_masked_feat = view2_masked_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
 
         # # union origin coord
         # shape:[10000]
@@ -711,14 +756,14 @@ class DBBD(nn.Module):
             origin_coord=view1_origin_coord,
             coord=transformed_points_X1_dict,
             feat=view1_feat,
-            masked_feat=view1_masked_feat, # NOTE Masked Variables added NOTE #
+            # masked_feat=view1_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view1_offset,
         )
         view2_data_dict = dict(
             origin_coord=view2_origin_coord,
             coord=transformed_points_X2_dict,
             feat=view2_feat,
-            masked_feat=view2_masked_feat, # NOTE Masked Variables added NOTE #
+            # masked_feat=view2_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view2_offset,
         )
         
@@ -741,8 +786,8 @@ class DBBD(nn.Module):
         if "view2_grid_coord" in data_dict.keys():
             view2_data_dict["grid_coord"] = data_dict["view2_grid_coord"]
 
-        # view1_feat = self.point_encoder(view1_data_dict)
-        # view2_feat = self.point_encoder(view2_data_dict)
+        view1_point_feat = self.point_encoder(view1_data_dict)
+        view2_point_feat = self.point_encoder(view2_data_dict)
 
         # # NOTE Masked Functions added NOTE # TODO: CAN WE MIX HERE OR SHOULD WE MIX IN THE FUNCTIONS OR DO WE NOT MIX AT ALL ?
         # # view mixing strategy
@@ -779,6 +824,32 @@ class DBBD(nn.Module):
                 combine_features(all_features_dict_branch1, features_dict_branch1)
                 combine_features(all_features_dict_branch2, features_dict_branch2)
             loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
+        
+        if self.loss_method in ["point_and_level"]:
+            # Initialize dictionaries for accumulating features across batches
+            all_features_dict_branch1 = {}
+            all_features_dict_branch2 = {}
+            for i in range(len(view1_offset)):
+                hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
+                # Collect features
+                features_dict_branch1 = {} # shape: [96]
+                features_dict_branch2 = {} # shape: [96]
+                collect_region_features_per_level(hierarchical_regions, features_dict_branch1, features_dict_branch2)
+
+                # Combine features across batches
+                combine_features(all_features_dict_branch1, features_dict_branch1)
+                combine_features(all_features_dict_branch2, features_dict_branch2)
+            level_loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
+            print("LEVEL LOSS: ", level_loss)
+            point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
+            print("POINT LOSS: ", point_loss)
+            
+            # NOTE JUST ADDED FOR TESTING NOW
+            # TODO COMBINE THEM IN A BETTER WAY
+            loss = 0.5 * level_loss + 0.5 * point_loss
+            
+            
+            
         #LOSS per point
         elif self.loss_method in ["point"]:
             # Initialize dictionaries for accumulating features across batches

@@ -3,7 +3,7 @@ import numpy as np
 import shutil
 
 def process_npy_files(root_dir):
-    required_files = {"color.npy", "coord.npy", "instance.npy", "normal.npy", "segment.npy"}
+    required_files = {"color.npy", "coord.npy", "instance.npy", "normal.npy", "segment20.npy"}
 
     for dirpath, dirnames, filenames in os.walk(root_dir):
         print(f"I am at: {filenames}")
@@ -51,4 +51,4 @@ def process_npy_files(root_dir):
                     print(f"Overwritten {file_name} with {sampled_data.shape[0]} points.")
 
 # Usage
-process_npy_files('./data/s3dis_filtered')
+process_npy_files('./data/scannet')
