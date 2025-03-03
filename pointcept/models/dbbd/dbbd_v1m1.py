@@ -23,7 +23,7 @@ import pointops
 from torch_geometric.nn.pool import voxel_grid
 from timm.models.layers import trunc_normal_
 
-def inference(encoder, points_tensor, view_data_dict=None):
+def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
     # Encode the points using the dynamic encoder
     device = points_tensor.device
     resized_points_tensor = points_tensor.reshape(points_tensor.shape[0] *  points_tensor.shape[1], points_tensor.shape[2]) # (B, N, D) -> (B*N, D)
@@ -31,14 +31,17 @@ def inference(encoder, points_tensor, view_data_dict=None):
     offset_arr = []
     for i in range(points_tensor.shape[0]):
         offset_arr.append((i+1)*points_tensor.shape[1]) # Each offset is the number of points in the previous batch
-    offset_arr = torch.tensor(offset_arr,device=device)
+    offset_arr = torch.tensor(offset_arr, device=device)
 
-
+    indices = np.concatenate(indices_list, axis=0)
+    grid_coord = view_data_dict["grid_coord"][indices]
+    feat = view_data_dict["feat"][indices]
+    
     # points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 0.01,
     #                "offset": offset_arr}
 
     #point_dict issue for sparseconv (New encoder)
-    points_dict = {"feat": view_data_dict["feat"], "coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
+    points_dict = {"feat": feat, "coord": resized_points_tensor[:, :3], "grid_coord": grid_coord, 
                    "offset": offset_arr}
     
     # # NOTE Masked variables added NOTE #
@@ -88,7 +91,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # Iterate through regions and get corresponding indices then points from transformed points -> List of points vectors (levelB, levelN, D)
     points_tensor_list = []
-    
+    indices_list = []
     for i, reg in enumerate(region):
         batch_idx = reg['batch_idx']
         
@@ -100,6 +103,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         if len(indices) == 0:
             raise Exception("Got a region with no indics")
         else:
+            indices_list.append(indices)
             # shape: [5000, 3] [N, D]
             points_tensor = corresponding_transformed_points[indices] # (levelN, D)
             # shape: [5000, 96] [N, output_dim]
@@ -126,7 +130,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # NOTE Masked variables added NOTE #
     # shape: [4, 5000, 96] [B, N, output_dim]
-    batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+    batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
     # if torch.isnan(batched_point_masked_features).any():
     #     print("NaN detected in `batched_point_masked_features` before aggregation")
     #     exit()
@@ -181,9 +185,22 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         encode_and_aggregate(previous_level_sub_regions, encoder, aggregator, view_data_dict, level=level+1, max_levels= max_levels)
 
         super_points_from_previous_level = []
+        indices_list = []
         for reg in region:
             if reg['sub_regions']:
                 for sub_region in reg['sub_regions']:
+                    # Get min and max grid values to convert the center back to the points scale
+                    grid_min = view_data_dict['grid_coord'].min(dim=0).values  # Min per coordinate
+                    grid_max = view_data_dict['grid_coord'].max(dim=0).values  # Max per coordinate
+
+                    # Convert NumPy center to tensor and denormalize
+                    center_tensor = torch.tensor(sub_region['center'], dtype=torch.float32, device=view_data_dict['grid_coord'].device)
+                    center_original = (center_tensor + 1) / 2 * (grid_max - grid_min) + grid_min  # Convert back to grid scale
+                    
+                    # Now search for matching index
+                    index = torch.where(torch.all(torch.isclose(view_data_dict['grid_coord'].float(), center_original, atol=1), dim=1))[0]
+                    
+                    indices_list.append(index)
                     super_points_from_previous_level.append(sub_region['super_point_branch2'])
         
 
@@ -200,7 +217,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
-        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         # if torch.isnan(batched_point_masked_features).any():
         #     print("NaN detected in `batched_point_masked_features` before aggregation")
         #     exit()
@@ -220,6 +237,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
     else:
         # IF LAST LEVEL
         points_tensor_list = []
+        indices_list = []
         for i, reg in enumerate(region):
             batch_idx = reg['batch_idx']
             
@@ -232,6 +250,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             if len(indices) == 0:
                 raise Exception("Got a region with no indics")
             else:
+                indices_list.append(indices)
                 # shape: [5000, 3] [N, D]
                 points_tensor = corresponding_transformed_points[indices] # (levelN, D)
                 # shape: [5000, 96] [N, output_dim]
@@ -253,7 +272,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [4, 500, 96] [B, N, output_dim]
-        batched_point_features = inference(encoder, batched_tensor, view_data_dict)
+        batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         
         # NOTE NAN ARE BEING DETECTED
         # TODO FIX THE ROOT CAUSE
@@ -517,6 +536,10 @@ class DBBD(nn.Module):
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
         self.loss_method = loss_method
+        
+        # Define alpha and beta as trainable parameters
+        self.alpha = nn.Parameter(torch.tensor(0.7, requires_grad=True))  # Initialized as 0.7
+        self.beta = nn.Parameter(torch.tensor(0.3, requires_grad=True))   # Initialized as 0.3
         
         # NOTE Masked Variables added NOTE #
         self.mask_grid_size = mask_grid_size
@@ -840,13 +863,14 @@ class DBBD(nn.Module):
                 combine_features(all_features_dict_branch1, features_dict_branch1)
                 combine_features(all_features_dict_branch2, features_dict_branch2)
             level_loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
-            print("LEVEL LOSS: ", level_loss)
+            # print("LEVEL LOSS: ", level_loss)
             point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
-            print("POINT LOSS: ", point_loss)
+            # print("POINT LOSS: ", point_loss)
             
-            # NOTE JUST ADDED FOR TESTING NOW
-            # TODO COMBINE THEM IN A BETTER WAY
-            loss = 0.5 * level_loss + 0.5 * point_loss
+            # Ensure alpha and beta stay positive (optional)
+            alpha = torch.sigmoid(self.alpha)  # Keeps alpha in range (0,1)
+            beta = torch.sigmoid(self.beta)    # Keeps beta in range (0,1)
+            loss = alpha * level_loss + beta * point_loss
             
             
             
