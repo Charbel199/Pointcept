@@ -3,6 +3,8 @@ Pretraining TODO
 
 Author: Anthony Yaghi, Manuel Philipp Vogel
 """
+
+import warnings
 from typing import List, Dict, Any
 from itertools import chain
 import torch.distributed as dist
@@ -32,7 +34,7 @@ def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
     for i in range(points_tensor.shape[0]):
         offset_arr.append((i+1)*points_tensor.shape[1]) # Each offset is the number of points in the previous batch
     offset_arr = torch.tensor(offset_arr, device=device)
-
+    
     indices = np.concatenate(indices_list, axis=0)
     grid_coord = view_data_dict["grid_coord"][indices]
     feat = view_data_dict["feat"][indices]
@@ -128,8 +130,9 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     # else:
     #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
-    # NOTE Masked variables added NOTE #
+    # print(f"POINTS TENSOR SHAPE: {len(indices_list)}")
     # shape: [4, 5000, 96] [B, N, output_dim]
+    print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
     batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
     # if torch.isnan(batched_point_masked_features).any():
     #     print("NaN detected in `batched_point_masked_features` before aggregation")
@@ -160,8 +163,11 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
             if len(sub_region['points_indices']) > 0:
                 parent_feature_list.append(batched_region_feature[i])
                 next_level_sub_regions.append(sub_region)
-    if len(next_level_sub_regions) > 0 and len(parent_feature_list)>0:
+            else:
+                warnings.warn("Sub region with no indices")
+    if len(next_level_sub_regions) > 0 and len(parent_feature_list) > 0:
         assert len(next_level_sub_regions) == len(parent_feature_list), "Mismatch between next level subregions and parent features list"
+        print(f"PROPAGATION SUB REGIONS: {len(next_level_sub_regions)} at LEVEL: {level}")
         encode_and_propagate(next_level_sub_regions, encoder, aggregator, propagation_method, view_data_dict, parent_feature=parent_feature_list, level=level+1)
     
     return region
@@ -189,18 +195,13 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         for reg in region:
             if reg['sub_regions']:
                 for sub_region in reg['sub_regions']:
-                    # Get min and max grid values to convert the center back to the points scale
-                    grid_min = view_data_dict['grid_coord'].min(dim=0).values  # Min per coordinate
-                    grid_max = view_data_dict['grid_coord'].max(dim=0).values  # Max per coordinate
-
                     # Convert NumPy center to tensor and denormalize
-                    center_tensor = torch.tensor(sub_region['center'], dtype=torch.float32, device=view_data_dict['grid_coord'].device)
-                    center_original = (center_tensor + 1) / 2 * (grid_max - grid_min) + grid_min  # Convert back to grid scale
+                    center_tensor = torch.tensor(sub_region['center'], dtype=torch.float32, device=view_data_dict['origin_coord'].device)
                     
                     # Now search for matching index
-                    index = torch.where(torch.all(torch.isclose(view_data_dict['grid_coord'].float(), center_original, atol=1), dim=1))[0]
+                    index = torch.where(torch.all(view_data_dict['origin_coord'] == center_tensor, dim=1))[0]
                     
-                    indices_list.append(index)
+                    indices_list.append(index.cpu().numpy())
                     super_points_from_previous_level.append(sub_region['super_point_branch2'])
         
 
@@ -217,6 +218,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
+        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         # if torch.isnan(batched_point_masked_features).any():
         #     print("NaN detected in `batched_point_masked_features` before aggregation")
@@ -231,8 +233,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['level_branch2'] = level
             
-            reg['super_point2'] = batched_point_features[i] # NOTE: Added by Angelo for testing
-            # reg['super_point_masked2'] = batched_point_masked_features[i] # NOTE: Added by Angelo for testing
+            reg['super_point2'] = batched_point_features[i] 
             
     else:
         # IF LAST LEVEL
@@ -272,6 +273,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [4, 500, 96] [B, N, output_dim]
+        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         
         # NOTE NAN ARE BEING DETECTED
@@ -540,6 +542,7 @@ class DBBD(nn.Module):
         # Define alpha and beta as trainable parameters
         self.alpha = nn.Parameter(torch.tensor(0.7, requires_grad=True))  # Initialized as 0.7
         self.beta = nn.Parameter(torch.tensor(0.3, requires_grad=True))   # Initialized as 0.3
+        self.valid = True
         
         # NOTE Masked Variables added NOTE #
         self.mask_grid_size = mask_grid_size
@@ -704,6 +707,7 @@ class DBBD(nn.Module):
 
     def forward(self, data_dict):
         total_loss = 0.0
+        self.valid = True
 
         # shape:[10000, 3]
         # tensor([  [0.4466, 0.0245, 0.0412],
@@ -773,7 +777,25 @@ class DBBD(nn.Module):
         # batch_idx [1]: 0
         # }
         batch_hierarchical_regions = data_dict['regions']
-
+        
+        def print_sub_regions(regions, level):
+            print(len(regions), "regions at level", level)
+            for region in regions:
+                sub_regions = region.get('sub_regions', None)
+                if sub_regions is not None:
+                    if len(sub_regions) != 2 and level == 0:
+                        self.valid = False
+                        raise RuntimeError("Expected 2 sub-regions at level 0")
+                    # else:
+                    #     print("Level", level, "has", len(sub_regions), "sub-regions")   
+                    if len(sub_regions) != 0 and level == 1:
+                        self.valid = False
+                        raise RuntimeError("Expected 0 sub-regions at level 1")
+                    # else:
+                    #     print("Level", level, "has", len(sub_regions), "sub-regions")
+                    print_sub_regions(sub_regions, level=level+1)
+                
+        # print_sub_regions(batch_hierarchical_regions, level = 0)
 
         view1_data_dict = dict(
             origin_coord=view1_origin_coord,
@@ -867,11 +889,10 @@ class DBBD(nn.Module):
             point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
             # print("POINT LOSS: ", point_loss)
             
-            # Ensure alpha and beta stay positive (optional)
+            # NOTE TODO Ensure alpha and beta stay positive ???
             alpha = torch.sigmoid(self.alpha)  # Keeps alpha in range (0,1)
             beta = torch.sigmoid(self.beta)    # Keeps beta in range (0,1)
-            loss = alpha * level_loss + beta * point_loss
-            
+            loss = 0.5 * level_loss + 0.5 * point_loss
             
             
         #LOSS per point
