@@ -175,6 +175,12 @@ class Trainer(TrainerBase):
 
     def run_step(self):
         input_dict = self.comm_info["input_dict"]
+        
+        if input_dict is None:
+            print("Skipping invalid batch")
+            return  # Skip this iteration if the batch is invalid
+        
+        
         for key in input_dict.keys():
             if isinstance(input_dict[key], torch.Tensor):
                 input_dict[key] = input_dict[key].cuda(non_blocking=True)
@@ -253,6 +259,15 @@ class Trainer(TrainerBase):
             if self.cfg.seed is not None
             else None
         )
+        
+        # TODO: REMOVE OR KEEP
+        def filter_collate_fn(batch):
+            # Filter out None samples
+            batch = [b for b in batch if b is not None]
+            
+            if len(batch) == 0:
+                return None  # Ensure we do not pass empty batches
+            return point_collate_fn(batch, mix_prob=self.cfg.mix_prob)  # Add mix_prob to collate_fn
 
         train_loader = torch.utils.data.DataLoader(
             train_data,
@@ -260,7 +275,8 @@ class Trainer(TrainerBase):
             shuffle=(train_sampler is None),
             num_workers=self.cfg.num_worker_per_gpu,
             sampler=train_sampler,
-            collate_fn=partial(point_collate_fn, mix_prob=self.cfg.mix_prob),
+            # collate_fn=partial(point_collate_fn, mix_prob=self.cfg.mix_prob),
+            collate_fn=filter_collate_fn, # TODO: REMOVE OR KEEP
             pin_memory=True,
             worker_init_fn=init_fn,
             drop_last=True,

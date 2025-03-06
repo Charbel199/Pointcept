@@ -35,6 +35,8 @@ def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
         offset_arr.append((i+1)*points_tensor.shape[1]) # Each offset is the number of points in the previous batch
     offset_arr = torch.tensor(offset_arr, device=device)
     
+    # print(f"OFFSET ARRAY: {offset_arr.shape}")
+    
     indices = np.concatenate(indices_list, axis=0)
     grid_coord = view_data_dict["grid_coord"][indices]
     feat = view_data_dict["feat"][indices]
@@ -132,7 +134,8 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # print(f"POINTS TENSOR SHAPE: {len(indices_list)}")
     # shape: [4, 5000, 96] [B, N, output_dim]
-    print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+    if (batched_tensor.shape[0] != 4 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
+        print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
     batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
     # if torch.isnan(batched_point_masked_features).any():
     #     print("NaN detected in `batched_point_masked_features` before aggregation")
@@ -167,7 +170,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
                 warnings.warn("Sub region with no indices")
     if len(next_level_sub_regions) > 0 and len(parent_feature_list) > 0:
         assert len(next_level_sub_regions) == len(parent_feature_list), "Mismatch between next level subregions and parent features list"
-        print(f"PROPAGATION SUB REGIONS: {len(next_level_sub_regions)} at LEVEL: {level}")
+        # print(f"PROPAGATION SUB REGIONS: {len(next_level_sub_regions)} at LEVEL: {level}")
         encode_and_propagate(next_level_sub_regions, encoder, aggregator, propagation_method, view_data_dict, parent_feature=parent_feature_list, level=level+1)
     
     return region
@@ -198,10 +201,15 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                     # Convert NumPy center to tensor and denormalize
                     center_tensor = torch.tensor(sub_region['center'], dtype=torch.float32, device=view_data_dict['origin_coord'].device)
                     
+                    # TODO: CHECK IF THIS IS CORRECT OR NEEDS ADJUSTMENT :TODO #
                     # Now search for matching index
                     index = torch.where(torch.all(view_data_dict['origin_coord'] == center_tensor, dim=1))[0]
-                    
-                    indices_list.append(index.cpu().numpy())
+                    if len(index) > 1:
+                        index = np.array([index[0].cpu().numpy()])
+                        print(f"INDEX: {index}")
+                        indices_list.append(index)
+                    else:  
+                        indices_list.append(index.cpu().numpy())
                     super_points_from_previous_level.append(sub_region['super_point_branch2'])
         
 
@@ -218,7 +226,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
-        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        if (batched_tensor.shape[0] != 8 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
+            print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         # if torch.isnan(batched_point_masked_features).any():
         #     print("NaN detected in `batched_point_masked_features` before aggregation")
@@ -273,7 +282,8 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
 
         # shape: [4, 500, 96] [B, N, output_dim]
-        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        if (batched_tensor.shape[0] != 4 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
+            print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         
         # NOTE NAN ARE BEING DETECTED

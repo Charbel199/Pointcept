@@ -1,5 +1,6 @@
 import numpy as np
 from typing import *
+import warnings
 
 
 def assign_points_to_regions(points: np.ndarray, centers: np.ndarray) -> List[List[int]]:
@@ -74,15 +75,22 @@ def hierarchical_region_proposal(points: np.ndarray,points_rgb: np.ndarray, num_
         points_pos = points[:, :3]
         sampled_centers = farthest_point_sampling(points_pos, num_samples_per_level)
         regions_pts_indices = assign_points_to_regions(points_pos, sampled_centers)
-
+        
         hierarchical_regions = []
         for center, region_indices in zip(sampled_centers, regions_pts_indices):
 
             if len(region_indices) < min_num_points_per_pointcloud:
-                continue
-            region_indices = np.random.choice(region_indices, size=min_num_points_per_pointcloud, replace=False)
-            region_points = points[region_indices]  # (N_region, D)
-            region_colors = colors[region_indices]
+                # warnings.warn("Length of region_indices {} < {} min_num_points_per_pointcloud".format(len(region_indices), min_num_points_per_pointcloud))
+                # region_indices = np.random.choice(region_indices, size=len(region_indices), replace=False)
+                extra_indices = np.random.choice(region_indices, size=(min_num_points_per_pointcloud - len(region_indices)), replace=True)
+                region_indices = np.concatenate([region_indices, extra_indices])
+                region_points = points[region_indices]  # (N_region, D)
+                region_colors = colors[region_indices]
+                # continue
+            else:
+                region_indices = np.random.choice(region_indices, size=min_num_points_per_pointcloud, replace=False)
+                region_points = points[region_indices]  # (N_region, D)
+                region_colors = colors[region_indices]
             _, sub_regions = recursive_fps(region_points, points_rgb, level + 1, min_num_points_list=min_num_points_list)
             hierarchical_regions.append({
                 'center': center,
