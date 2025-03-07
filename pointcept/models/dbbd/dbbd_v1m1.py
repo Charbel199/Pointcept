@@ -6,10 +6,8 @@ Author: Anthony Yaghi, Manuel Philipp Vogel
 
 import warnings
 from typing import List, Dict, Any
-from itertools import chain
 import torch.distributed as dist
 import numpy as np
-import random
 import torch
 torch.manual_seed(12)
 import torch.nn as nn
@@ -21,9 +19,6 @@ from pointcept.models.dbbd.Propagator import ConcatPropagation
 from pointcept.models.builder import MODELS, build_model
 from pointcept.models.utils import offset2batch
 from pointcept.utils.comm import get_world_size
-import pointops
-from torch_geometric.nn.pool import voxel_grid
-from timm.models.layers import trunc_normal_
 
 def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
     # Encode the points using the dynamic encoder
@@ -40,30 +35,13 @@ def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
     indices = np.concatenate(indices_list, axis=0)
     grid_coord = view_data_dict["grid_coord"][indices]
     feat = view_data_dict["feat"][indices]
-    
-    # points_dict = {"feat": F.pad(resized_points_tensor, padding_size), "coord": resized_points_tensor[:, :3], "grid_size": 0.01,
-    #                "offset": offset_arr}
 
     #point_dict issue for sparseconv (New encoder)
     points_dict = {"feat": feat, "coord": resized_points_tensor[:, :3], "grid_coord": grid_coord, 
                    "offset": offset_arr}
     
-    # # NOTE Masked variables added NOTE #
-    # points_masked_dict = {"feat": view_data_dict["masked_feat"],"coord": resized_points_tensor[:, :3], "grid_coord": view_data_dict['grid_coord'], 
-                #    "offset": offset_arr}
-    
-    # point_features = encoder(points_dict)["feat"]
-    
     # shape: [20000, 96] [B*N, output_dim]
     point_features = encoder(points_dict) # (B*N, output_dim)
-    
-    # if torch.isnan(view_data_dict["masked_feat"]).any():
-    #     print("NaN detected in `masked_feat` before encoding!")
-    #     exit()
-    
-    # point_masked_features = encoder(points_masked_dict) # NOTE Masked variables added NOTE #
-    
-    # point_features = F.pad(point_features, (0, 128 - 64))  # since the output is 64, pad to 128
 
     # shape: [20000] [B*N]
     batch = offset2batch(offset_arr)
@@ -74,10 +52,6 @@ def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
     batch_count = batch.bincount()
     point_features_split = point_features.split(list(batch_count))
     point_features_split = torch.stack(point_features_split)
-    
-    # # NOTE Masked variables added NOTE #
-    # point_masked_features_split = point_masked_features.split(list(batch_count))
-    # point_masked_features_split = torch.stack(point_masked_features_split)
     
     # shape: [4, 5000, 96] [B, N, output_dim]
     return point_features_split
@@ -123,23 +97,11 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
 
     # shape: [4, 5000, 96] [B, N, output_dim]
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
-
-    # Encode
-    # if batched_tensor.shape[2] == 6:
-    #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-    # elif batched_tensor.shape[2] ==output_dim:
-    #     padding_size = (0, 6)
-    # else:
-    #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
     
     # print(f"POINTS TENSOR SHAPE: {len(indices_list)}")
     # shape: [4, 5000, 96] [B, N, output_dim]
-    if (batched_tensor.shape[0] != 4 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
-        print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+    print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
     batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
-    # if torch.isnan(batched_point_masked_features).any():
-    #     print("NaN detected in `batched_point_masked_features` before aggregation")
-    #     exit()
 
     # Aggregate
     # shape: [4, 96] [B, output_dim]
@@ -154,8 +116,6 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
         # }
         reg['super_point_branch1'] = batched_region_feature[i] # (output_dim,)
         reg['super_point1'] = batched_point_features[i] # (N, output_dim)
-        # NOTE Masked variables added NOTE #
-        # reg['super_point_masked1'] = batched_point_masked_features[i] # (N, output_dim)
         reg['level_branch1'] = level 
 
         # Duplicate in parent_feature array based on number of upcoming subregions
@@ -218,30 +178,18 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
-        # if batched_tensor.shape[2] == 6:
-        #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-        # elif batched_tensor.shape[2] ==output_dim:
-        #     padding_size = (0, 6)
-        # else:
-        #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
-
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
-        if (batched_tensor.shape[0] != 8 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
-            print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
-        # if torch.isnan(batched_point_masked_features).any():
-        #     print("NaN detected in `batched_point_masked_features` before aggregation")
-        #     exit()
 
         # Aggregate
         # shape [8, 96] [B * num_sample_lvl, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
-        # NOTE and TODO: Why are we not also adding super_point2 here ?
+        # NOTE Why are we not also adding super_point2 here ?
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['level_branch2'] = level
-            
             reg['super_point2'] = batched_point_features[i] 
             
     else:
@@ -272,33 +220,16 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         # shape: [4, 500, 96] [B, N, output_dim]
         batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
-
-        # # Encode
-        # if batched_tensor.shape[2] == 6:
-        #     padding_size = (0, output_dim)  # pad the last dimension (0 elems in front, 128 after)
-        # elif batched_tensor.shape[2] ==output_dim:
-        #     padding_size = (0, 6)
-        # else:
-        #     print(f"PROBLEM WITH TENSOR SIZE {batched_tensor.shape}")
-
         # shape: [4, 500, 96] [B, N, output_dim]
-        if (batched_tensor.shape[0] != 4 and level == 0) or (batched_tensor.shape[0] != 8 and level == 1):
-            print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         
-        # NOTE NAN ARE BEING DETECTED
-        # TODO FIX THE ROOT CAUSE
-        # if torch.isnan(batched_point_masked_features).any():
-        #     print("NaN detected in `batched_point_masked_features` before aggregation")
-        #     exit()
-        # Aggregate
         # shape: [4, 96] [B, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['super_point2'] = batched_point_features[i] # (N, output_dim)
-            # reg['super_point_masked2'] = batched_point_masked_features[i] # (N, output_dim)
             reg['level_branch2'] = level 
 
     return region
@@ -349,32 +280,6 @@ def collect_region_features_per_points(region: Dict[str, Any],
     # Recursively collect from sub-regions
     for sub_region in region['sub_regions']:
         collect_region_features_per_points(sub_region, features_dict_branch1, features_dict_branch2)
-
-# NOTE Masked variables added NOTE #  
-def collect_region_masked_features_per_points(region: Dict[str, Any],
-                                      masked_features_dict_branch1: Dict[int, List[torch.Tensor]],
-                                      masked_features_dict_branch2: Dict[int, List[torch.Tensor]]) -> None:
-    # Collect features from Branch 1
-    if 'super_point_masked1' in region:
-        # level1 (here 0 since mx_lvl=0) is the current branch1 level with respect to total max levels
-        level1 = region['level_branch1']
-        if level1 not in masked_features_dict_branch1:
-            masked_features_dict_branch1[level1] = []
-        # total desired shape: [1 x [5000, 96]] [mx_lvl x [N, output_dim]]
-        masked_features_dict_branch1[level1].append(region['super_point_masked1'])
-
-    # Collect features from Branch 2
-    if 'super_point_masked2' in region:
-        # level2 (here 0 since mx_lvl=0) is the current branch2 level with respect to total max levels
-        level2 = region['level_branch2']
-        if level2 not in masked_features_dict_branch2:
-            masked_features_dict_branch2[level2] = []
-        # total desired shape: [1 x [5000, 96]] [mx_lvl x [N, output_dim]]
-        masked_features_dict_branch2[level2].append(region['super_point_masked2'])
-
-    # Recursively collect from sub-regions
-    for sub_region in region['sub_regions']:
-        collect_region_masked_features_per_points(sub_region, masked_features_dict_branch1, masked_features_dict_branch2)
 
 def compute_contrastive_loss_per_level(features_dict_branch1: Dict[int, List[torch.Tensor]],
                                        features_dict_branch2: Dict[int, List[torch.Tensor]],
@@ -519,170 +424,25 @@ class DBBD(nn.Module):
         output_dim,
         device,
         loss_method,
-        
-        # NOTE Masked Variables added NOTE #
-        backbone_in_channels,
-        backbone_out_channels,
-        mask_grid_size=0.1,
-        mask_rate=0.4,
-        view1_mix_prob=0,
-        view2_mix_prob=0,
-        matching_max_k=8,
-        matching_max_radius=0.03,
-        matching_max_pair=8192,
-        nce_t=0.4,
-        contrast_weight=1,
-        reconstruct_weight=1,
-        reconstruct_color=True,
-        reconstruct_normal=True,
-
+        alpha,
+        beta
     ):
         super().__init__()
         self.point_encoder = build_model(backbone)
         self.aggregator = MaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
+        
         # self.propagation_method.update_feature_dim(input_dim=backbone["in_channels"], feature_dim=128)
-        # NOTE Changed by Angelo for Testing NOTE #
         self.propagation_method.update_feature_dim(input_dim=99, feature_dim=96)
+        
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
         self.loss_method = loss_method
+        self.alpha = alpha
+        self.beta = beta
         
-        # Define alpha and beta as trainable parameters
-        self.alpha = nn.Parameter(torch.tensor(0.7, requires_grad=True))  # Initialized as 0.7
-        self.beta = nn.Parameter(torch.tensor(0.3, requires_grad=True))   # Initialized as 0.3
         self.valid = True
-        
-        # NOTE Masked Variables added NOTE #
-        self.mask_grid_size = mask_grid_size
-        self.mask_rate = mask_rate
-        self.view1_mix_prob = view1_mix_prob
-        self.view2_mix_prob = view2_mix_prob
-        self.matching_max_k = matching_max_k
-        self.matching_max_radius = matching_max_radius
-        self.matching_max_pair = matching_max_pair
-        self.nce_t = nce_t
-        self.contrast_weight = contrast_weight
-        self.reconstruct_weight = reconstruct_weight
-        self.reconstruct_color = reconstruct_color
-        self.reconstruct_normal = reconstruct_normal
-
-        self.mask_token = nn.Parameter(torch.zeros(1, backbone_in_channels))
-        trunc_normal_(self.mask_token, mean=0.0, std=0.02)
-        self.color_head = (
-            nn.Linear(backbone_out_channels, 3) if reconstruct_color else None
-        )
-        self.normal_head = (
-            nn.Linear(backbone_out_channels, 3) if reconstruct_normal else None
-        )
-        self.nce_criteria = torch.nn.CrossEntropyLoss(reduction="mean")
-
-    # NOTE Masked Functions added NOTE #
-    @torch.no_grad()
-    def generate_cross_masks(
-        self, view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
-    ):
-        # union origin coord
-        view1_batch = offset2batch(view1_offset)
-        view2_batch = offset2batch(view2_offset)
-
-        view1_batch_count = view1_batch.bincount()
-        view2_batch_count = view2_batch.bincount()
-        view1_origin_coord_split = view1_origin_coord.split(list(view1_batch_count))
-        view2_origin_coord_split = view2_origin_coord.split(list(view2_batch_count))
-        union_origin_coord = torch.cat(
-            list(
-                chain.from_iterable(
-                    zip(view1_origin_coord_split, view2_origin_coord_split)
-                )
-            )
-        )
-        union_offset = torch.cat(
-            [view1_offset.unsqueeze(-1), view2_offset.unsqueeze(-1)], dim=-1
-        ).sum(-1)
-        union_batch = offset2batch(union_offset)
-
-        # grid partition
-        mask_patch_coord = union_origin_coord.div(self.mask_grid_size)
-        mask_patch_grid_coord = torch.floor(mask_patch_coord)
-        mask_patch_cluster = voxel_grid(
-            pos=mask_patch_grid_coord, size=1, batch=union_batch, start=0
-        )
-        unique, cluster, counts = torch.unique(
-            mask_patch_cluster, sorted=True, return_inverse=True, return_counts=True
-        )
-        patch_num = unique.shape[0]
-        patch_max_point = counts.max().item()
-        patch2point_map = cluster.new_zeros(patch_num, patch_max_point)
-        patch2point_mask = torch.lt(
-            torch.arange(patch_max_point).cuda().unsqueeze(0), counts.unsqueeze(-1)
-        )
-        sorted_cluster_value, sorted_cluster_indices = torch.sort(cluster)
-        patch2point_map[patch2point_mask] = sorted_cluster_indices
-
-        # generate cross masks
-        assert self.mask_rate <= 0.5
-        patch_mask = torch.zeros(patch_num, device=union_origin_coord.device).int()
-        rand_perm = torch.randperm(patch_num)
-        mask_patch_num = int(patch_num * self.mask_rate)
-
-        # mask1 tag with 1, mask2 tag with 2
-        patch_mask[rand_perm[0:mask_patch_num]] = 1
-        patch_mask[rand_perm[mask_patch_num : mask_patch_num * 2]] = 2
-        point_mask = torch.zeros(
-            union_origin_coord.shape[0], device=union_origin_coord.device
-        ).int()
-        point_mask[
-            patch2point_map[patch_mask == 1][patch2point_mask[patch_mask == 1]]
-        ] = 1
-        point_mask[
-            patch2point_map[patch_mask == 2][patch2point_mask[patch_mask == 2]]
-        ] = 2
-
-        # separate mask to view1 and view2
-        point_mask_split = point_mask.split(
-            list(
-                torch.cat(
-                    [view1_batch_count.unsqueeze(-1), view2_batch_count.unsqueeze(-1)],
-                    dim=-1,
-                ).flatten()
-            )
-        )
-        view1_point_mask = torch.cat(point_mask_split[0::2]) == 1
-        view2_point_mask = torch.cat(point_mask_split[1::2]) == 2
-        return view1_point_mask, view2_point_mask
-
-    @torch.no_grad()
-    def match_contrastive_pair(
-        self, view1_coord, view1_offset, view2_coord, view2_offset, max_k, max_radius
-    ):
-        index, distance = pointops.knn_query(
-            max_k,
-            view2_coord.float(),
-            view2_offset.int(),
-            view1_coord.float(),
-            view1_offset.int(),
-        )
-        index = torch.cat(
-            [
-                torch.arange(index.shape[0], device=index.device, dtype=torch.long)
-                .view(-1, 1, 1)
-                .expand(-1, max_k, 1),
-                index.view(-1, max_k, 1),
-            ],
-            dim=-1,
-        )[distance.squeeze(-1) < max_radius]
-        unique, count = index[:, 0].unique(return_counts=True)
-        select = (
-            torch.cumsum(count, dim=0)
-            - torch.randint(count.max(), count.shape, device=count.device) % count
-            - 1
-        )
-        index = index[select]
-        if index.shape[0] > self.matching_max_pair:
-            index = index[torch.randperm(index.shape[0])[: self.matching_max_pair]]
-        return index
 
     def compute_contrastive_loss(
         self, view1_feat, view1_offset, view2_feat, view2_offset, match_index
@@ -742,23 +502,6 @@ class DBBD(nn.Module):
         view2_coord = data_dict["view2_coord"]
         view2_feat = data_dict["view2_feat"]
         view2_offset = data_dict["view2_offset"].int()
-        
-        # # NOTE Masked Variables added NOTE #
-        # view1_masked_feat = data_dict.get("view1_masked_feat", data_dict["view1_feat"])
-        # view2_masked_feat = data_dict.get("view2_masked_feat", data_dict["view2_feat"])
-
-        # # NOTE Masked Functions added NOTE #
-        # view1_point_mask, view2_point_mask = self.generate_cross_masks(
-        #     view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
-        # )
-
-        # view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
-        # view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
-        # view1_masked_feat = view1_masked_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
-
-        # view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
-        # view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
-        # view2_masked_feat = view2_masked_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
 
         # # union origin coord
         # shape:[10000]
@@ -811,29 +554,14 @@ class DBBD(nn.Module):
             origin_coord=view1_origin_coord,
             coord=transformed_points_X1_dict,
             feat=view1_feat,
-            # masked_feat=view1_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view1_offset,
         )
         view2_data_dict = dict(
             origin_coord=view2_origin_coord,
             coord=transformed_points_X2_dict,
             feat=view2_feat,
-            # masked_feat=view2_masked_feat, # NOTE Masked Variables added NOTE #
             offset=view2_offset,
         )
-        
-        # view1_data_dict = dict(
-        #     origin_coord=view1_origin_coord,
-        #     coord=view1_coord,
-        #     feat=view1_feat,
-        #     offset=view1_offset,
-        # )
-        # view2_data_dict = dict(
-        #     origin_coord=view2_origin_coord,
-        #     coord=view2_coord,
-        #     feat=view2_feat,
-        #     offset=view2_offset,
-        # )
 
         # SparseConv based method need grid coord
         if "view1_grid_coord" in data_dict.keys():
@@ -843,17 +571,6 @@ class DBBD(nn.Module):
 
         view1_point_feat = self.point_encoder(view1_data_dict)
         view2_point_feat = self.point_encoder(view2_data_dict)
-
-        # # NOTE Masked Functions added NOTE # TODO: CAN WE MIX HERE OR SHOULD WE MIX IN THE FUNCTIONS OR DO WE NOT MIX AT ALL ?
-        # # view mixing strategy
-        # if random.random() < self.view1_mix_prob:
-        #     view1_data_dict["offset"] = torch.cat(
-        #         [view1_offset[1:-1:2], view1_offset[-1].unsqueeze(0)], dim=0
-        #     )
-        # if random.random() < self.view2_mix_prob:
-        #     view2_data_dict["offset"] = torch.cat(
-        #         [view2_offset[1:-1:2], view2_offset[-1].unsqueeze(0)], dim=0
-        #     )
         
         # # Encode and process with shared encoder using the same regions
         # # encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
@@ -899,10 +616,7 @@ class DBBD(nn.Module):
             point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
             # print("POINT LOSS: ", point_loss)
             
-            # NOTE TODO Ensure alpha and beta stay positive ???
-            alpha = torch.sigmoid(self.alpha)  # Keeps alpha in range (0,1)
-            beta = torch.sigmoid(self.beta)    # Keeps beta in range (0,1)
-            loss = 0.5 * level_loss + 0.5 * point_loss
+            loss = self.alpha * level_loss + self.beta * point_loss
             
             
         #LOSS per point
@@ -922,131 +636,7 @@ class DBBD(nn.Module):
                 combine_features(all_features_points_dict_branch1, features_dict_points_branch1)
                 combine_features(all_features_points_dict_branch2, features_dict_points_branch2)
             loss = compute_contrastive_loss_per_points(all_features_points_dict_branch1, all_features_points_dict_branch2)
-        elif self.loss_method in ["masked"]:
-            # view1_origin_coord = data_dict["view1_origin_coord"]
-            # view1_coord = data_dict["view1_coord"]
-            # view1_feat = data_dict["view1_feat"]
-            # view1_offset = data_dict["view1_offset"].int()
-
-            # view2_origin_coord = data_dict["view2_origin_coord"]
-            # view2_coord = data_dict["view2_coord"]
-            # view2_feat = data_dict["view2_feat"]
-            # view2_offset = data_dict["view2_offset"].int()
-
-            # # mask generation by union original coord (without spatial augmentation)
-            # view1_point_mask, view2_point_mask = self.generate_cross_masks(
-            #     view1_origin_coord, view1_offset, view2_origin_coord, view2_offset
-            # )
-
-            # view1_mask_tokens = self.mask_token.expand(view1_coord.shape[0], -1)
-            # view1_weight = view1_point_mask.unsqueeze(-1).type_as(view1_mask_tokens)
-            # view1_feat = view1_feat * (1 - view1_weight) + view1_mask_tokens * view1_weight
-
-            # view2_mask_tokens = self.mask_token.expand(view2_coord.shape[0], -1)
-            # view2_weight = view2_point_mask.unsqueeze(-1).type_as(view2_mask_tokens)
-            # view2_feat = view2_feat * (1 - view2_weight) + view2_mask_tokens * view2_weight
-
-            # view1_data_dict = dict(
-            #     origin_coord=view1_origin_coord,
-            #     coord=view1_coord,
-            #     feat=view1_feat,
-            #     offset=view1_offset,
-            # )
-            # view2_data_dict = dict(
-            #     origin_coord=view2_origin_coord,
-            #     coord=view2_coord,
-            #     feat=view2_feat,
-            #     offset=view2_offset,
-            # )
-
-            # # SparseConv based method need grid coord
-            # if "view1_grid_coord" in data_dict.keys():
-            #     view1_data_dict["grid_coord"] = data_dict["view1_grid_coord"]
-            # if "view2_grid_coord" in data_dict.keys():
-            #     view2_data_dict["grid_coord"] = data_dict["view2_grid_coord"]
-
-            # # view mixing strategy
-            # if random.random() < self.view1_mix_prob:
-            #     view1_data_dict["offset"] = torch.cat(
-            #         [view1_offset[1:-1:2], view1_offset[-1].unsqueeze(0)], dim=0
-            #     )
-            # if random.random() < self.view2_mix_prob:
-            #     view2_data_dict["offset"] = torch.cat(
-            #         [view2_offset[1:-1:2], view2_offset[-1].unsqueeze(0)], dim=0
-            #     )
-
-            # view1_feat = self.point_encoder(view1_data_dict)
-            # view2_feat = self.point_encoder(view2_data_dict)
             
-            match_index = self.match_contrastive_pair(
-                view1_origin_coord,
-                view1_offset,
-                view2_origin_coord,
-                view2_offset,
-                max_k=self.matching_max_k,
-                max_radius=self.matching_max_radius,
-            )
-            
-            # Initialize dictionaries for accumulating features across batches
-            all_masked_features_points_dict_branch1 = {}
-            all_masked_features_points_dict_branch2 = {}
-            for i in range(len(view1_offset)):
-                hierarchical_regions = batch_hierarchical_regions[i] # Tree of (levelN, D)
-                # Collect features
-                masked_features_dict_points_branch1 = {} # shape: [5000, 96]
-                masked_features_dict_points_branch2 = {} # shape: [1, 96] NOTE should be [5000, 96]
-                collect_region_masked_features_per_points(hierarchical_regions, masked_features_dict_points_branch1, masked_features_dict_points_branch2)
-
-                # Combine features across batches
-                # all_masked_features_points_dict_branch1 shape: [1, [4, 5000, 96]] [mx_lvl, [B, N, output_dim]]
-                combine_features(all_masked_features_points_dict_branch1, masked_features_dict_points_branch1)
-                combine_features(all_masked_features_points_dict_branch2, masked_features_dict_points_branch2)
-            
-            all_masked_features_points_dict_branch1 = torch.cat(all_masked_features_points_dict_branch1[0], dim=0)
-            all_masked_features_points_dict_branch2 = torch.cat(all_masked_features_points_dict_branch2[0], dim=0)
-            nce_loss, pos_sim, neg_sim = self.compute_contrastive_loss(
-                all_masked_features_points_dict_branch1, view1_offset, all_masked_features_points_dict_branch2, view2_offset, match_index
-            )
-            loss = nce_loss * self.contrast_weight
-            result_dict = dict(nce_loss=nce_loss, pos_sim=pos_sim, neg_sim=neg_sim)
-
-            # if self.color_head is not None:
-            #     assert "view1_color" in data_dict.keys()
-            #     assert "view2_color" in data_dict.keys()
-            #     view1_color = data_dict["view1_color"]
-            #     view2_color = data_dict["view2_color"]
-            #     view1_color_pred = self.color_head(view1_feat[view1_point_mask])
-            #     view2_color_pred = self.color_head(view2_feat[view2_point_mask])
-            #     color_loss = (
-            #         torch.sum((view1_color_pred - view1_color[view1_point_mask]) ** 2)
-            #         + torch.sum((view2_color_pred - view2_color[view2_point_mask]) ** 2)
-            #     ) / (view1_color_pred.shape[0] + view2_color_pred.shape[0])
-            #     loss = loss + color_loss * self.reconstruct_weight
-            #     result_dict["color_loss"] = color_loss
-
-            # if self.normal_head is not None:
-            #     assert "view1_normal" in data_dict.keys()
-            #     assert "view2_normal" in data_dict.keys()
-            #     view1_normal = data_dict["view1_normal"]
-            #     view2_normal = data_dict["view2_normal"]
-            #     view1_normal_pred = self.normal_head(view1_feat[view1_point_mask])
-            #     view2_normal_pred = self.normal_head(view2_feat[view2_point_mask])
-
-            #     view1_normal_pred = view1_normal_pred / (
-            #         torch.norm(view1_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
-            #     )
-            #     view2_normal_pred = view2_normal_pred / (
-            #         torch.norm(view2_normal_pred, p=2, dim=1, keepdim=True) + 1e-10
-            #     )
-            #     normal_loss = (
-            #         torch.sum(view1_normal_pred * view1_normal[view1_point_mask])
-            #         + torch.sum(view2_normal_pred * view2_normal[view2_point_mask])
-            #     ) / (view1_normal_pred.shape[0] + view2_normal_pred.shape[0])
-            #     loss = loss + normal_loss * self.reconstruct_weight
-            #     result_dict["normal_loss"] = normal_loss
-
-            result_dict["loss"] = loss    
-        
         total_loss += loss
         result_dict = dict(loss=total_loss)
         return result_dict

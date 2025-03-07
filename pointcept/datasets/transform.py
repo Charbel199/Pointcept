@@ -78,17 +78,17 @@ class Copy(object):
 
 @TRANSFORMS.register_module()
 class DBDD(object):
-    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int]):
+    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool):
         self.max_levels = max_levels
         self.num_samples_per_level = num_samples_per_level
         self.min_num_points_list = min_num_points_list
+        self.equal_splits = equal_splits
 
     def __call__(self, data_dict):
-        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list)
+        regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
         data_dict["regions"] = regions
         
         self.valid = True
-        # TODO CAN BE KEPT AS A DEBUGGING TOOL
         def print_sub_regions(regions, level):
             for region in regions:
                 sub_regions = region.get('sub_regions', None)
