@@ -35,3 +35,5 @@ RUN TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0+PTX 8.0" pip install -U git+https://github
 # Added to remove error for train (AssertionError: Trainer: DBBD: PointTransformerV3: Make sure flash_attn is installed.)
 RUN pip install flash-attn
 RUN pip install debugpy
+RUN apt-get update && apt-get install -y libx11-6
+RUN apt-get update && apt-get install -y libgl1-mesa-glx libgl1-mesa-dri
