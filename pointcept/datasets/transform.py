@@ -83,6 +83,7 @@ class DBDD(object):
         self.num_samples_per_level = num_samples_per_level
         self.min_num_points_list = min_num_points_list
         self.equal_splits = equal_splits
+        self.index = 0
 
     def __call__(self, data_dict):
         regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
@@ -106,6 +107,11 @@ class DBDD(object):
             # warnings.warn("Invalid number of sub-regions, returning None.")
             return None
         else:
+            from .utils import collect_regions_by_level, save_colored_regions
+            all_points = data_dict["coord"]
+            regions_by_level = collect_regions_by_level(data_dict['regions'])  # Collect regions
+            save_colored_regions(all_points, regions_by_level, filename=f"colored_regions_{self.index}.ply")  # Save colored point cloud
+            self.index += 1
             return data_dict
     
 

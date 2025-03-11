@@ -1,15 +1,18 @@
 _base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
-batch_size = 32  # bs: total bs in all gpus
+batch_size = 2  # bs: total bs in all gpus
 mix_prob = 0
+equal_splits = False
+alpha_weight = 0.5
+beta_weight = 0.5
 empty_cache = False
 enable_amp = False
 num_worker=1
 evaluate = False
 mx_lvl = 1
 num_samples_per_level=2
-point_max=500
-min_num_points_list = [250, 125]
+point_max=10000
+min_num_points_list = [5000, 1000, 400]
 # model settings
 model = dict(
     type="DBBD-v1m1",
@@ -23,24 +26,10 @@ model = dict(
     output_dim=13,
     device = "cuda",
     loss_method = "point_and_level",
+    alpha = alpha_weight,
+    beta = beta_weight,
     num_samples_per_level=num_samples_per_level,
     max_levels=mx_lvl,
-    
-    # NOTE Masked Variables added NOTE #
-    backbone_in_channels=6,
-    backbone_out_channels=96,
-    mask_grid_size=0.1,
-    mask_rate=0.4,
-    view1_mix_prob=0.4,
-    view2_mix_prob=0.4,
-    matching_max_k=8,
-    matching_max_radius=0.03,
-    matching_max_pair=4096,
-    nce_t=0.07,
-    contrast_weight=1,
-    reconstruct_weight=1,
-    reconstruct_color=False,
-    reconstruct_normal=False,
 )
 
 # scheduler settings
@@ -85,7 +74,7 @@ data = dict(
         # max_levels=mx_lvl,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=point_max),
+            dict(type="SphereCrop", point_max=point_max, mode="random"),
             dict(type="Copy", keys_dict={"coord": "origin_coord"}),
             dict(
                 type="ContrastiveViewsGenerator",
@@ -113,7 +102,7 @@ data = dict(
                     dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD", num_samples_per_level=num_samples_per_level, max_levels=mx_lvl, min_num_points_list=min_num_points_list),
+            dict(type="DBDD", num_samples_per_level=num_samples_per_level, max_levels=mx_lvl, min_num_points_list=min_num_points_list, equal_splits=equal_splits),
 
             dict(type="ToTensor"),
             dict(
@@ -132,7 +121,7 @@ data = dict(
                     "regions",
                 ),
                 offset_keys_dict=dict(
-                    view1_offset="view1_coord", view2_offset="view2_coord"
+                    view1_offset="view1_grid_coord", view2_offset="view2_grid_coord"
                 ),
                 view1_feat_keys=("view1_color", "view1_normal"),
                 view2_feat_keys=("view2_color", "view2_normal"),

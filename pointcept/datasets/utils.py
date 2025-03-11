@@ -5,11 +5,14 @@ Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
 
+import os
 import random
 from collections.abc import Mapping, Sequence
 import numpy as np
 import torch
 from torch.utils.data.dataloader import default_collate
+
+import open3d as o3d
 
 
 def collate_fn(batch):
@@ -66,3 +69,56 @@ def point_collate_fn(batch, mix_prob=0):
 
 def gaussian_kernel(dist2: np.array, a: float = 1, c: float = 5):
     return a * np.exp(-dist2 / (2 * c**2))
+
+
+def collect_regions_by_level(region, level=0, level_dict=None):
+    """
+    Recursively collect all regions grouped by hierarchy levels.
+
+    :param region: Root region dictionary.
+    :param level: Current level in the hierarchy.
+    :param level_dict: Dictionary to store regions per level.
+    """
+    if level_dict is None:
+        level_dict = {}
+
+    if level not in level_dict:
+        level_dict[level] = []
+
+    level_dict[level].append(region['points_indices'])  # Store indices at this level
+
+    # Recursively process subregions
+    for sub_region in region.get('sub_regions', []):
+        collect_regions_by_level(sub_region, level + 1, level_dict)
+
+    return level_dict
+
+def save_colored_regions(points, regions_by_level, filename="colored_regions.ply"):
+    """
+    Save processed point cloud with unique colors per hierarchy level and region.
+
+    :param points: (N, 3) NumPy array of all points.
+    :param regions_by_level: Dictionary containing point indices grouped by hierarchy levels.
+    :param filename: Output filename.
+    """
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(points)
+
+    num_levels = len(regions_by_level)
+    point_colors = np.zeros((points.shape[0], 3))  # Default color: black
+
+    # Assign different colors per region within each level
+    for level, regions in regions_by_level.items():
+        num_regions = len(regions)
+        region_colors = np.random.rand(num_regions, 3)  # Unique color for each region
+
+        for i, region_indices in enumerate(regions):
+            point_colors[region_indices] = region_colors[i]  # Assign region-specific color
+
+    point_cloud.colors = o3d.utility.Vector3dVector(point_colors)
+
+    os.makedirs("colored_regions", exist_ok=True)  # Ensure directory exists
+    output_path = os.path.join("colored_regions", filename)
+    o3d.io.write_point_cloud(output_path, point_cloud)
+
+    print(f"Colored point cloud saved as {output_path}.")

@@ -1,18 +1,18 @@
 _base_ = ["../_base_/default_runtime.py"]
 # misc custom setting
-batch_size = 8  # bs: total bs in all gpus
+batch_size = 2  # bs: total bs in all gpus
 mix_prob = 0
 equal_splits = False
 alpha_weight = 0.5
 beta_weight = 0.5
 empty_cache = False
 enable_amp = False
-num_worker=2
+num_worker=1
 evaluate = False
 mx_lvl = 2
 num_samples_per_level=2
-point_max=5000
-min_num_points_list = [1000, 200, 20]
+point_max=10000
+min_num_points_list = [4000, 1000, 100]
 
 find_unused_parameters = True # NOTE ADDED FOR MULTI-GPU TRAINING
 
