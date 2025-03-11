@@ -260,14 +260,14 @@ class Trainer(TrainerBase):
             else None
         )
         
-        # TODO: REMOVE OR KEEP
-        def filter_collate_fn(batch):
-            # Filter out None samples
-            batch = [b for b in batch if b is not None]
+        # # TODO: REMOVE OR KEEP
+        # def filter_collate_fn(batch):
+        #     # Filter out None samples
+        #     batch = [b for b in batch if b is not None]
             
-            if len(batch) == 0:
-                return None  # Ensure we do not pass empty batches
-            return point_collate_fn(batch, mix_prob=self.cfg.mix_prob)  # Add mix_prob to collate_fn
+        #     if len(batch) == 0:
+        #         return None  # Ensure we do not pass empty batches
+        #     return point_collate_fn(batch, mix_prob=self.cfg.mix_prob)  # Add mix_prob to collate_fn
 
         train_loader = torch.utils.data.DataLoader(
             train_data,
@@ -275,8 +275,8 @@ class Trainer(TrainerBase):
             shuffle=(train_sampler is None),
             num_workers=self.cfg.num_worker_per_gpu,
             sampler=train_sampler,
-            # collate_fn=partial(point_collate_fn, mix_prob=self.cfg.mix_prob),
-            collate_fn=filter_collate_fn, # TODO: REMOVE OR KEEP
+            collate_fn=partial(point_collate_fn, mix_prob=self.cfg.mix_prob),
+            # collate_fn=filter_collate_fn, # TODO: REMOVE OR KEEP
             pin_memory=True,
             worker_init_fn=init_fn,
             drop_last=True,

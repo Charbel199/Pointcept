@@ -7,7 +7,6 @@ Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com)
 Please cite our work if the code is helpful to you.
 """
 
-import os
 import logging
 from datetime import timedelta
 import torch

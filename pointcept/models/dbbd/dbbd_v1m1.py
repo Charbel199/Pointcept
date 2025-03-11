@@ -439,8 +439,8 @@ class DBBD(nn.Module):
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
         self.loss_method = loss_method
-        self.alpha = alpha
-        self.beta = beta
+        self.alpha = torch.tensor(alpha, device="cuda")
+        self.beta = torch.tensor(beta, device="cuda")
         
         self.valid = True
 
@@ -612,12 +612,14 @@ class DBBD(nn.Module):
                 combine_features(all_features_dict_branch1, features_dict_branch1)
                 combine_features(all_features_dict_branch2, features_dict_branch2)
             level_loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
-            # print("LEVEL LOSS: ", level_loss)
             point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
-            # print("POINT LOSS: ", point_loss)
+            
+            # NOTE TESTING MULTI-GPU TRAINING
+            device = next(self.parameters()).device  # Get model's device
+            level_loss = level_loss.to(device)
+            point_loss = point_loss.to(device)
             
             loss = self.alpha * level_loss + self.beta * point_loss
-            
             
         #LOSS per point
         elif self.loss_method in ["point"]:
