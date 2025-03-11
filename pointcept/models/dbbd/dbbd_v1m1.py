@@ -100,7 +100,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     
     # print(f"POINTS TENSOR SHAPE: {len(indices_list)}")
     # shape: [4, 5000, 96] [B, N, output_dim]
-    print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+    # print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
     batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
 
     # Aggregate
@@ -166,7 +166,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
                     index = torch.where(torch.all(view_data_dict['origin_coord'] == center_tensor, dim=1))[0]
                     if len(index) > 1:
                         index = np.array([index[0].cpu().numpy()])
-                        print(f"INDEX: {index}")
+                        # print(f"INDEX: {index}")
                         indices_list.append(index)
                     else:  
                         indices_list.append(index.cpu().numpy())
@@ -179,7 +179,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = batched_tensor.unsqueeze(1) # (levelB, 1, C)
 
         # shape: [8, 1, 96] [B * num_sample_lvl, 1, output_dim]
-        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        # print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
 
         # Aggregate
@@ -221,7 +221,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
 
         # shape: [4, 500, 96] [B, N, output_dim]
-        print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
+        # print(f"AGGREGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
         batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
         
         # shape: [4, 96] [B, output_dim]
