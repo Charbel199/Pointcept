@@ -78,7 +78,7 @@ class Copy(object):
 
 
 @TRANSFORMS.register_module()
-class DBDD(object):
+class DBBD(object):
     def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False):
         self.max_levels = max_levels
         self.num_samples_per_level = num_samples_per_level

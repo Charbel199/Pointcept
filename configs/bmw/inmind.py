@@ -105,7 +105,7 @@ data = dict(
                     dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
+            dict(type="DBBD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
@@ -161,7 +161,7 @@ data = dict(
                     dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
+            dict(type="DBBD",num_samples_per_level=num_samples_per_level,max_levels=mx_lvl,min_num_points_list=min_num_points_list),
             dict(type="ToTensor"),
             dict(
                 type="Collect",
