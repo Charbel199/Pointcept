@@ -20,6 +20,7 @@ import torch
 import copy
 from collections.abc import Sequence, Mapping
 
+from .utils import collect_regions_by_level, save_colored_regions
 from pointcept.utils.registry import Registry
 from .preprocessing.hierarchical_region_proposal import hierarchical_region_proposal
 
@@ -78,41 +79,23 @@ class Copy(object):
 
 @TRANSFORMS.register_module()
 class DBDD(object):
-    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool):
+    def __init__(self, num_samples_per_level:int, max_levels:int, min_num_points_list:List[int], equal_splits:bool, save_point_cloud:bool=False):
         self.max_levels = max_levels
         self.num_samples_per_level = num_samples_per_level
         self.min_num_points_list = min_num_points_list
         self.equal_splits = equal_splits
+        self.save_point_cloud = save_point_cloud # Used for visualization of the split
         self.index = 0
 
     def __call__(self, data_dict):
         regions = hierarchical_region_proposal(data_dict["coord"],data_dict["color"], num_samples_per_level=self.num_samples_per_level, max_levels=self.max_levels, batch_idx=0,min_num_points_list=self.min_num_points_list, equal_splits=self.equal_splits)
         data_dict["regions"] = regions
-        
-        self.valid = True
-        def print_sub_regions(regions, level):
-            for region in regions:
-                sub_regions = region.get('sub_regions', None)
-                if sub_regions is not None:
-                    if len(sub_regions) != self.num_samples_per_level and level != self.max_levels:
-                        # warnings.warn("Expected {} sub-regions at level {}, got {}".format(self.num_samples_per_level, level, len(sub_regions)))
-                        self.valid = True
-                    elif len(sub_regions) != 0 and level == self.max_levels:
-                        # warnings.warn("Expected {} sub-regions at level {}, got {}".format(self.num_samples_per_level, level, len(sub_regions)))
-                        self.valid = True
-                    print_sub_regions(sub_regions, level=level+1)
-                
-        print_sub_regions([regions], level = 0)
-        if not self.valid:
-            # warnings.warn("Invalid number of sub-regions, returning None.")
-            return None
-        else:
-            from .utils import collect_regions_by_level, save_colored_regions
+        if self.save_point_cloud: # Used for visualization of the split
             all_points = data_dict["coord"]
             regions_by_level = collect_regions_by_level(data_dict['regions'])  # Collect regions
             save_colored_regions(all_points, regions_by_level, filename=f"colored_regions_{data_dict['name']}_{self.index}.ply")  # Save colored point cloud
             self.index += 1
-            return data_dict
+        return data_dict
     
 
 @TRANSFORMS.register_module()

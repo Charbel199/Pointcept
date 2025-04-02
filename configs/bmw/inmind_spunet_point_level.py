@@ -3,6 +3,7 @@ _base_ = ["../_base_/default_runtime.py"]
 batch_size = 2  # bs: total bs in all gpus
 mix_prob = 0
 equal_splits = False
+save_point_cloud = False
 alpha_weight = 0.5
 beta_weight = 0.5
 empty_cache = False
@@ -105,7 +106,7 @@ data = dict(
                     dict(type="NormalizeColor")
                 ],
             ),
-            dict(type="DBDD", num_samples_per_level=num_samples_per_level, max_levels=mx_lvl, min_num_points_list=min_num_points_list, equal_splits=equal_splits),
+            dict(type="DBDD", num_samples_per_level=num_samples_per_level, max_levels=mx_lvl, min_num_points_list=min_num_points_list, equal_splits=equal_splits, save_point_cloud=save_point_cloud),
 
             dict(type="ToTensor"),
             dict(
