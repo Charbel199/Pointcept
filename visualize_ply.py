@@ -1,7 +1,7 @@
 import os
 import open3d as o3d
 
-folder_name = "colored_regions"
+folder_name = "colored_regions_2_2_15k_7k_3k"
 
 for colored_regions_file in os.listdir(folder_name):
     ply_file = os.path.join(folder_name, colored_regions_file)

@@ -9,10 +9,10 @@ empty_cache = False
 enable_amp = False
 num_worker=1
 evaluate = False
-mx_lvl = 2
+mx_lvl = 1
 num_samples_per_level=2
 point_max=10000
-min_num_points_list = [4000, 1000, 100]
+min_num_points_list = [4000, 1500, 100]
 
 find_unused_parameters = True # NOTE ADDED FOR MULTI-GPU TRAINING
 
@@ -77,7 +77,7 @@ data = dict(
         # max_levels=mx_lvl,
         transform=[
             dict(type="CenterShift", apply_z=True),
-            dict(type="SphereCrop", point_max=point_max, mode="random"),
+            dict(type="SphereCrop", point_max=point_max, mode="center"),
             dict(type="Copy", keys_dict={"coord": "origin_coord"}),
             dict(
                 type="ContrastiveViewsGenerator",

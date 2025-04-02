@@ -110,7 +110,7 @@ class DBDD(object):
             from .utils import collect_regions_by_level, save_colored_regions
             all_points = data_dict["coord"]
             regions_by_level = collect_regions_by_level(data_dict['regions'])  # Collect regions
-            save_colored_regions(all_points, regions_by_level, filename=f"colored_regions_{self.index}.ply")  # Save colored point cloud
+            save_colored_regions(all_points, regions_by_level, filename=f"colored_regions_{data_dict['name']}_{self.index}.ply")  # Save colored point cloud
             self.index += 1
             return data_dict
     

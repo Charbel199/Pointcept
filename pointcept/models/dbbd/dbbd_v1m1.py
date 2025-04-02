@@ -4,18 +4,21 @@ Pretraining TODO
 Author: Anthony Yaghi, Manuel Philipp Vogel
 """
 
+# External Libraries
 import warnings
 from typing import List, Dict, Any
-import torch.distributed as dist
-import numpy as np
 import torch
-torch.manual_seed(12)
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
+import numpy as np
 
+# Set manual seed for reproducibility
+torch.manual_seed(12)
+
+# Pointcept Modules
 from pointcept.models.dbbd.Aggregator import MaxPoolAggregator
 from pointcept.models.dbbd.Propagator import ConcatPropagation
-
 from pointcept.models.builder import MODELS, build_model
 from pointcept.models.utils import offset2batch
 from pointcept.utils.comm import get_world_size
@@ -30,13 +33,10 @@ def inference(encoder, points_tensor, view_data_dict=None, indices_list=None):
         offset_arr.append((i+1)*points_tensor.shape[1]) # Each offset is the number of points in the previous batch
     offset_arr = torch.tensor(offset_arr, device=device)
     
-    # print(f"OFFSET ARRAY: {offset_arr.shape}")
-    
     indices = np.concatenate(indices_list, axis=0)
     grid_coord = view_data_dict["grid_coord"][indices]
     feat = view_data_dict["feat"][indices]
 
-    #point_dict issue for sparseconv (New encoder)
     points_dict = {"feat": feat, "coord": resized_points_tensor[:, :3], "grid_coord": grid_coord, 
                    "offset": offset_arr}
     
@@ -98,9 +98,7 @@ def encode_and_propagate(region: List[Dict[str, Any]], # (levelB, ...)
     # shape: [4, 5000, 96] [B, N, output_dim]
     batched_tensor = torch.stack(points_tensor_list) # (levelB, levelN, D or output_dim) # Assuming all regions on a level have the same number of points
     
-    # print(f"POINTS TENSOR SHAPE: {len(indices_list)}")
     # shape: [4, 5000, 96] [B, N, output_dim]
-    # print(f"PROPAGATION POINTS: {batched_tensor.shape} at LEVEL: {level}")
     batched_point_features = inference(encoder, batched_tensor, view_data_dict, indices_list=indices_list)
 
     # Aggregate
@@ -158,7 +156,7 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         for reg in region:
             if reg['sub_regions']:
                 for sub_region in reg['sub_regions']:
-                    # Convert NumPy center to tensor and denormalize
+                    # Get the center of the sub-region
                     center_tensor = torch.tensor(sub_region['center'], dtype=torch.float32, device=view_data_dict['origin_coord'].device)
                     
                     # TODO: CHECK IF THIS IS CORRECT OR NEEDS ADJUSTMENT :TODO #
@@ -186,7 +184,6 @@ def encode_and_aggregate(region: List[Dict[str, Any]], # (levelB, ...)
         # shape [8, 96] [B * num_sample_lvl, output_dim]
         batched_region_feature = aggregator(batched_point_features) # (levelB, output_dim,)
 
-        # NOTE Why are we not also adding super_point2 here ?
         for i, reg in enumerate(region):
             reg['super_point_branch2'] = batched_region_feature[i] # (output_dim,)
             reg['level_branch2'] = level
@@ -261,7 +258,6 @@ def collect_region_features_per_points(region: Dict[str, Any],
                                       features_dict_branch2: Dict[int, List[torch.Tensor]]) -> None:
     # Collect features from Branch 1
     if 'super_point1' in region:
-        # level1 (here 0 since mx_lvl=0) is the current branch1 level with respect to total max levels
         level1 = region['level_branch1']
         if level1 not in features_dict_branch1:
             features_dict_branch1[level1] = []
@@ -270,7 +266,6 @@ def collect_region_features_per_points(region: Dict[str, Any],
 
     # Collect features from Branch 2
     if 'super_point2' in region:
-        # level2 (here 0 since mx_lvl=0) is the current branch2 level with respect to total max levels
         level2 = region['level_branch2']
         if level2 not in features_dict_branch2:
             features_dict_branch2[level2] = []
@@ -432,43 +427,50 @@ class DBBD(nn.Module):
         self.aggregator = MaxPoolAggregator().to(device)
         self.propagation_method = ConcatPropagation().to(device)
         
-        # self.propagation_method.update_feature_dim(input_dim=backbone["in_channels"], feature_dim=128)
+        # Feature dimensionality update
         self.propagation_method.update_feature_dim(input_dim=99, feature_dim=96)
         
         self.output_dim = output_dim
         self.num_samples_per_level=num_samples_per_level
         self.max_levels=max_levels
         self.loss_method = loss_method
+        
+        # Weights for loss
         self.alpha = torch.tensor(alpha, device="cuda")
         self.beta = torch.tensor(beta, device="cuda")
-        
-        self.valid = True
 
     def compute_contrastive_loss(
         self, view1_feat, view1_offset, view2_feat, view2_offset, match_index
     ):
         assert view1_offset.shape == view2_offset.shape
         
+        # Select matched features
         view1_feat = view1_feat[match_index[:, 0]]
         view2_feat = view2_feat[match_index[:, 1]]
+        
+        # Normalize matched features
         view1_feat = view1_feat / (
             torch.norm(view1_feat, p=2, dim=1, keepdim=True) + 1e-7
         )
         view2_feat = view2_feat / (
             torch.norm(view2_feat, p=2, dim=1, keepdim=True) + 1e-7
         )
+        
         sim = torch.mm(view1_feat, view2_feat.transpose(1, 0))
-
+        labels = torch.arange(sim.shape[0], device=view1_feat.device).long()
+        
+        # Compute positive/negative similarities
         with torch.no_grad():
             pos_sim = torch.diagonal(sim).mean()
             neg_sim = sim.mean(dim=-1).mean() - pos_sim / match_index.shape[0]
-        labels = torch.arange(sim.shape[0], device=view1_feat.device).long()
+            
         loss = self.nce_criteria(torch.div(sim, self.nce_t), labels)
 
         if get_world_size() > 1:
             dist.all_reduce(loss)
             dist.all_reduce(pos_sim)
             dist.all_reduce(neg_sim)
+        
         return (
             loss / get_world_size(),
             pos_sim / get_world_size(),
@@ -477,21 +479,14 @@ class DBBD(nn.Module):
 
     def forward(self, data_dict):
         total_loss = 0.0
-        self.valid = True
 
         # shape:[10000, 3]
-        # tensor([  [0.4466, 0.0245, 0.0412],
-        #           [0.4399, 0.0207, 0.0390]])
         view1_origin_coord = data_dict["view1_origin_coord"]
         
         # shape:[10000, 3]
-        # tensor([  [-0.0622, 0.0688, 0.0390],
-        #           [-0.0774, 0.0666, 0.0361]])
         view1_coord = data_dict["view1_coord"]
         
         # shape:[10000, 6]
-        # tensor([  [-0.4568, -0.7104, -0.8174, 0.5063, 0.8505, -0.1421],
-        #           [-0.5058, -0.6798, -0.6015, -0.1276, 0.7727, 0.6218]])
         view1_feat = data_dict["view1_feat"]
         
         # shape:[2]
@@ -503,7 +498,6 @@ class DBBD(nn.Module):
         view2_feat = data_dict["view2_feat"]
         view2_offset = data_dict["view2_offset"].int()
 
-        # # union origin coord
         # shape:[10000]
         # tensor([0, 0, 0, 0, ..., 1, 1, 1, 1])
         view1_batch = offset2batch(view1_offset)
@@ -530,25 +524,6 @@ class DBBD(nn.Module):
         # batch_idx [1]: 0
         # }
         batch_hierarchical_regions = data_dict['regions']
-        
-        def print_sub_regions(regions, level):
-            print(len(regions), "regions at level", level)
-            for region in regions:
-                sub_regions = region.get('sub_regions', None)
-                if sub_regions is not None:
-                    if len(sub_regions) != 2 and level == 0:
-                        self.valid = False
-                        raise RuntimeError("Expected 2 sub-regions at level 0")
-                    # else:
-                    #     print("Level", level, "has", len(sub_regions), "sub-regions")   
-                    if len(sub_regions) != 0 and level == 1:
-                        self.valid = False
-                        raise RuntimeError("Expected 0 sub-regions at level 1")
-                    # else:
-                    #     print("Level", level, "has", len(sub_regions), "sub-regions")
-                    print_sub_regions(sub_regions, level=level+1)
-                
-        # print_sub_regions(batch_hierarchical_regions, level = 0)
 
         view1_data_dict = dict(
             origin_coord=view1_origin_coord,
@@ -572,15 +547,14 @@ class DBBD(nn.Module):
         view1_point_feat = self.point_encoder(view1_data_dict)
         view2_point_feat = self.point_encoder(view2_data_dict)
         
-        # # Encode and process with shared encoder using the same regions
-        # # encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, self.propagation_method, transformed_points_X1_dict,output_dim=self.output_dim)
+        # Encode and process with shared encoder using the same regions
         encode_and_propagate(batch_hierarchical_regions, self.point_encoder, self.aggregator, 
                              self.propagation_method, view_data_dict=view1_data_dict, output_dim=self.output_dim)
         encode_and_aggregate(batch_hierarchical_regions, self.point_encoder, self.aggregator, 
                              view_data_dict=view2_data_dict, max_levels=self.max_levels, output_dim=self.output_dim)
 
         # Compute loss for this sample
-        #LOSS per level
+        # LOSS per level
         if self.loss_method in ["level"]:
             # Initialize dictionaries for accumulating features across batches
             all_features_dict_branch1 = {}
@@ -614,14 +588,14 @@ class DBBD(nn.Module):
             level_loss = compute_contrastive_loss_per_level(all_features_dict_branch1, all_features_dict_branch2)
             point_loss = compute_contrastive_loss_all_points(view1_point_feat, view2_point_feat)
             
-            # NOTE TESTING MULTI-GPU TRAINING
+            # Move losses to the same device as the model parameters, this is important for distributed training.
             device = next(self.parameters()).device  # Get model's device
             level_loss = level_loss.to(device)
             point_loss = point_loss.to(device)
             
             loss = self.alpha * level_loss + self.beta * point_loss
             
-        #LOSS per point
+        # LOSS per point
         elif self.loss_method in ["point"]:
             # Initialize dictionaries for accumulating features across batches
             all_features_points_dict_branch1 = {}
